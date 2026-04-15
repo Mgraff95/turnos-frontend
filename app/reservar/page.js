@@ -17,6 +17,7 @@ export default function ReservarPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [turnoConfirmado, setTurnoConfirmado] = useState(null);
+  const [horariosLoaded, setHorariosLoaded] = useState(false);
 
   // Waitlist
   const [mostrarWaitlist, setMostrarWaitlist] = useState(false);
@@ -38,16 +39,23 @@ export default function ReservarPage() {
     if (!fechaSeleccionada || !servicioSeleccionado) return;
     setHoraSeleccionada('');
     setLoading(true);
+    setHorariosLoaded(false);
     setMostrarWaitlist(false);
     setWaitlistEnviado(false);
     api.get(`/api/turnos/disponibilidad/${fechaSeleccionada}/${servicioSeleccionado.id}`)
       .then(res => setHorariosDisponibles(res.data.horarios || []))
       .catch(() => setHorariosDisponibles([]))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); setHorariosLoaded(true); });
   }, [fechaSeleccionada, servicioSeleccionado]);
 
   const hoy = startOfToday();
   const proxDias = Array.from({ length: 30 }, (_, i) => addDays(hoy, i + 1));
+
+  // Detectar si faltan franjas
+  const tieneMañana = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) < 14);
+  const tieneTarde = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) >= 14);
+  const sinHorarios = horariosLoaded && horariosDisponibles.length === 0;
+  const faltaFranja = horariosLoaded && horariosDisponibles.length > 0 && (!tieneMañana || !tieneTarde);
 
   const handleSubmit = async () => {
     setError('');
@@ -92,6 +100,104 @@ export default function ReservarPage() {
     } finally {
       setWaitlistLoading(false);
     }
+  };
+
+  // ── Componente Waitlist (reutilizable) ───────
+  const WaitlistSection = ({ prominente }) => {
+    if (waitlistEnviado) {
+      return (
+        <div className="card bg-[#E8F5E8] border-[#C8E6C8] text-center mt-4">
+          <p className="text-[#6B8F6B] font-medium">✅ ¡Listo!</p>
+          <p className="text-sm text-[#6B8F6B] mt-1">Te vamos a avisar por WhatsApp si se libera un turno.</p>
+        </div>
+      );
+    }
+
+    if (!mostrarWaitlist) {
+      return (
+        <div className="mt-4">
+          <button onClick={() => setMostrarWaitlist(true)}
+            className={`w-full p-3 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              prominente
+                ? 'border-2 border-dashed border-[#D4A843] bg-[#FFFBF0] text-[#8B6F5E] hover:border-[#8B6F5E]'
+                : 'border border-[#E8DDD3] bg-white text-[#A89585] hover:border-[#8B6F5E] hover:text-[#8B6F5E]'
+            }`}>
+            {prominente
+              ? '🔔 Avisame si se libera un turno'
+              : '🔔 ¿No encontrás el horario que buscás? Unite a la lista de espera'
+            }
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="card mt-4 animate-fade-up">
+        <h3 className="font-semibold text-[#8B6F5E] mb-3">🔔 Lista de espera</h3>
+        <p className="text-sm text-[#A89585] mb-4">
+          Te avisamos por WhatsApp si se libera un turno para el{' '}
+          {format(new Date(fechaSeleccionada + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}.
+        </p>
+
+        {waitlistError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-3 text-sm">
+            {waitlistError}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-[#A89585] mb-1 block">¿En qué franja preferís?</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setWaitlistFranja('manana')}
+                className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  waitlistFranja === 'manana'
+                    ? 'bg-[#8B6F5E] text-white'
+                    : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
+                }`}>
+                ☀️ Mañana (9-13h)
+              </button>
+              <button onClick={() => setWaitlistFranja('tarde')}
+                className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  waitlistFranja === 'tarde'
+                    ? 'bg-[#8B6F5E] text-white'
+                    : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
+                }`}>
+                🌙 Tarde (14-18h)
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-[#A89585] mb-1 block">Nombre</label>
+            <input type="text" value={waitlistNombre} onChange={e => setWaitlistNombre(e.target.value)}
+              placeholder="Tu nombre" className="input-field" />
+          </div>
+          <div>
+            <label className="text-xs text-[#A89585] mb-1 block">Apellido</label>
+            <input type="text" value={waitlistApellido} onChange={e => setWaitlistApellido(e.target.value)}
+              placeholder="Tu apellido" className="input-field" />
+          </div>
+          <div>
+            <label className="text-xs text-[#A89585] mb-1 block">Teléfono (10 dígitos)</label>
+            <input type="tel" value={waitlistTelefono}
+              onChange={e => setWaitlistTelefono(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              placeholder="1123456789" className="input-field" maxLength={10} />
+            <p className="text-xs text-[#A89585] mt-1">Sin 0 ni 15. Te avisamos por WhatsApp.</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button onClick={handleWaitlist} disabled={waitlistLoading}
+            className="btn-primary flex-1">
+            {waitlistLoading ? 'Registrando...' : 'Avisame'}
+          </button>
+          <button onClick={() => setMostrarWaitlist(false)}
+            className="px-4 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#A89585] cursor-pointer">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // STEP 4: Confirmación
@@ -190,108 +296,28 @@ export default function ReservarPage() {
               <p className="font-medium mb-3">Horarios disponibles</p>
               {loading ? (
                 <p className="text-[#A89585] text-sm">Cargando horarios...</p>
-              ) : horariosDisponibles.length === 0 ? (
+              ) : sinHorarios ? (
                 <div>
-                  <p className="text-[#C47070] text-sm mb-4">No hay horarios disponibles para este día.</p>
-
-                  {/* ── Botón Waitlist ── */}
-                  {!mostrarWaitlist && !waitlistEnviado && (
-                    <button onClick={() => setMostrarWaitlist(true)}
-                      className="w-full p-3 rounded-lg border-2 border-dashed border-[#D4A843] bg-[#FFFBF0] text-[#8B6F5E] text-sm font-medium hover:border-[#8B6F5E] transition-colors cursor-pointer">
-                      🔔 Avisame si se libera un turno
-                    </button>
-                  )}
-
-                  {/* ── Confirmación waitlist ── */}
-                  {waitlistEnviado && (
-                    <div className="card bg-[#E8F5E8] border-[#C8E6C8] text-center">
-                      <p className="text-[#6B8F6B] font-medium">✅ ¡Listo!</p>
-                      <p className="text-sm text-[#6B8F6B] mt-1">Te vamos a avisar por WhatsApp si se libera un turno.</p>
-                    </div>
-                  )}
-
-                  {/* ── Formulario waitlist ── */}
-                  {mostrarWaitlist && !waitlistEnviado && (
-                    <div className="card mt-3 animate-fade-up">
-                      <h3 className="font-semibold text-[#8B6F5E] mb-3">🔔 Lista de espera</h3>
-                      <p className="text-sm text-[#A89585] mb-4">
-                        Te avisamos por WhatsApp si se libera un turno para el{' '}
-                        {format(new Date(fechaSeleccionada + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}.
-                      </p>
-
-                      {waitlistError && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-3 text-sm">
-                          {waitlistError}
-                        </div>
-                      )}
-
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-xs text-[#A89585] mb-1 block">Franja horaria</label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => setWaitlistFranja('manana')}
-                              className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                                waitlistFranja === 'manana'
-                                  ? 'bg-[#8B6F5E] text-white'
-                                  : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
-                              }`}>
-                              ☀️ Mañana (9-13h)
-                            </button>
-                            <button onClick={() => setWaitlistFranja('tarde')}
-                              className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                                waitlistFranja === 'tarde'
-                                  ? 'bg-[#8B6F5E] text-white'
-                                  : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
-                              }`}>
-                              🌙 Tarde (14-18h)
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-xs text-[#A89585] mb-1 block">Nombre</label>
-                          <input type="text" value={waitlistNombre} onChange={e => setWaitlistNombre(e.target.value)}
-                            placeholder="Tu nombre" className="input-field" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-[#A89585] mb-1 block">Apellido</label>
-                          <input type="text" value={waitlistApellido} onChange={e => setWaitlistApellido(e.target.value)}
-                            placeholder="Tu apellido" className="input-field" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-[#A89585] mb-1 block">Teléfono (10 dígitos)</label>
-                          <input type="tel" value={waitlistTelefono}
-                            onChange={e => setWaitlistTelefono(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                            placeholder="1123456789" className="input-field" maxLength={10} />
-                          <p className="text-xs text-[#A89585] mt-1">Sin 0 ni 15. Te avisamos por WhatsApp.</p>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 mt-4">
-                        <button onClick={handleWaitlist} disabled={waitlistLoading}
-                          className="btn-primary flex-1">
-                          {waitlistLoading ? 'Registrando...' : 'Avisame'}
-                        </button>
-                        <button onClick={() => setMostrarWaitlist(false)}
-                          className="px-4 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#A89585] cursor-pointer">
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <p className="text-[#C47070] text-sm">No hay horarios disponibles para este día.</p>
+                  <WaitlistSection prominente={true} />
                 </div>
               ) : (
-                <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 mb-6">
-                  {horariosDisponibles.map(h => {
-                    const isSelected = horaSeleccionada === h.hora_inicio;
-                    return (
-                      <button key={h.hora_inicio} onClick={() => setHoraSeleccionada(h.hora_inicio)}
-                        className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                          isSelected ? 'bg-[#8B6F5E] text-white' : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
-                        }`}>
-                        {h.hora_inicio}
-                      </button>
-                    );
-                  })}
+                <div>
+                  <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 mb-2">
+                    {horariosDisponibles.map(h => {
+                      const isSelected = horaSeleccionada === h.hora_inicio;
+                      return (
+                        <button key={h.hora_inicio} onClick={() => setHoraSeleccionada(h.hora_inicio)}
+                          className={`p-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                            isSelected ? 'bg-[#8B6F5E] text-white' : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E]'
+                          }`}>
+                          {h.hora_inicio}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {/* Waitlist sutil cuando hay horarios pero falta alguna franja */}
+                  <WaitlistSection prominente={false} />
                 </div>
               )}
             </>
