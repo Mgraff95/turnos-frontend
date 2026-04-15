@@ -1,6 +1,5 @@
 'use client';
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -30,6 +29,9 @@ export default function AdminPage() {
   const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' });
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
 
+  // Estado métricas
+  const [periodoMetricas, setPeriodoMetricas] = useState('mes');
+
   useEffect(() => {
     const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null;
     if (saved) setToken(saved);
@@ -37,7 +39,6 @@ export default function AdminPage() {
 
   useEffect(() => { if (token) loadAll(); }, [token]);
 
-  // Cargar horarios disponibles cuando cambia fecha o servicio en turno manual
   useEffect(() => {
     if (!turnoManual.fecha || !turnoManual.servicio_id) { setHorariosDisponibles([]); return; }
     api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${turnoManual.servicio_id}`)
@@ -46,6 +47,7 @@ export default function AdminPage() {
   }, [turnoManual.fecha, turnoManual.servicio_id]);
 
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
+
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
 
   const loadTurnos = async () => {
@@ -64,7 +66,8 @@ export default function AdminPage() {
     e.preventDefault(); setLoginError(''); setLoading(true);
     try {
       const res = await api.post('/api/admin/login', { email, password });
-      setToken(res.data.token); sessionStorage.setItem('admin_token', res.data.token);
+      setToken(res.data.token);
+      sessionStorage.setItem('admin_token', res.data.token);
     } catch (err) { setLoginError(err.response?.data?.error || 'Error al iniciar sesión'); }
     finally { setLoading(false); }
   };
@@ -73,48 +76,30 @@ export default function AdminPage() {
   // ── SERVICIOS ────────────────────────────────
   const handleCrearServicio = async (e) => {
     e.preventDefault();
-    try {
-      await api.post('/api/servicios', nuevoServicio, headers());
-      setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '' });
-      showMsg('Servicio creado'); loadServicios();
-    } catch (err) { showErr(err.response?.data?.error || 'Error al crear servicio'); }
+    try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '' }); showMsg('Servicio creado'); loadServicios(); }
+    catch (err) { showErr(err.response?.data?.error || 'Error al crear servicio'); }
   };
-
   const handleEditarServicio = async (e) => {
     e.preventDefault();
-    try {
-      await api.patch(`/api/servicios/${editandoServicio.id}`, {
-        nombre: editandoServicio.nombre,
-        duracion_minutos: parseInt(editandoServicio.duracion_minutos),
-        precio_pesos: parseFloat(editandoServicio.precio_pesos)
-      }, headers());
-      setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios();
-    } catch (err) { showErr('Error al actualizar'); }
+    try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos) }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); }
+    catch (err) { showErr('Error al actualizar'); }
   };
-
   const handleDesactivarServicio = async (id) => {
     if (!confirm('¿Desactivar este servicio?')) return;
     try { await api.delete(`/api/servicios/${id}`, headers()); showMsg('Servicio desactivado'); loadServicios(); }
     catch (err) { showErr('Error'); }
   };
 
-  // ── HORARIOS (múltiples rangos) ──────────────
+  // ── HORARIOS ─────────────────────────────────
   const handleCrearRango = async (e) => {
     e.preventDefault();
-    try {
-      await api.post('/api/horarios', nuevoRango, headers());
-      showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`);
-      loadHorarios();
-    } catch (err) { showErr('Error al crear rango'); }
+    try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); }
+    catch (err) { showErr('Error al crear rango'); }
   };
-
   const handleEditarRango = async (id, campo, valor) => {
-    try {
-      await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers());
-      showMsg('Rango actualizado'); loadHorarios();
-    } catch (err) { showErr('Error al actualizar'); }
+    try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Rango actualizado'); loadHorarios(); }
+    catch (err) { showErr('Error al actualizar'); }
   };
-
   const handleEliminarRango = async (id) => {
     if (!confirm('¿Eliminar este rango horario?')) return;
     try { await api.delete(`/api/horarios/${id}`, headers()); showMsg('Rango eliminado'); loadHorarios(); }
@@ -124,10 +109,8 @@ export default function AdminPage() {
   // ── BLOQUES ──────────────────────────────────
   const handleCrearBloque = async (e) => {
     e.preventDefault();
-    try {
-      await api.post('/api/horarios/bloques-cerrados', nuevoBloque, headers());
-      setNuevoBloque({ fecha: '', motivo: '' }); showMsg('Bloqueo agregado'); loadBloques();
-    } catch (err) { showErr('Error'); }
+    try { await api.post('/api/horarios/bloques-cerrados', nuevoBloque, headers()); setNuevoBloque({ fecha: '', motivo: '' }); showMsg('Bloqueo agregado'); loadBloques(); }
+    catch (err) { showErr('Error'); }
   };
   const handleEliminarBloque = async (id) => {
     try { await api.delete(`/api/horarios/bloques-cerrados/${id}`, headers()); showMsg('Eliminado'); loadBloques(); }
@@ -137,13 +120,66 @@ export default function AdminPage() {
   // ── TURNO MANUAL ─────────────────────────────
   const handleCrearTurnoManual = async (e) => {
     e.preventDefault();
-    try {
-      await api.post('/api/admin/turnos', turnoManual, headers());
-      setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' });
-      setMostrarFormTurno(false);
-      showMsg('Turno creado manualmente'); loadTurnos();
-    } catch (err) { showErr(err.response?.data?.error || 'Error al crear turno'); }
+    try { await api.post('/api/admin/turnos', turnoManual, headers()); setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' }); setMostrarFormTurno(false); showMsg('Turno creado manualmente'); loadTurnos(); }
+    catch (err) { showErr(err.response?.data?.error || 'Error al crear turno'); }
   };
+
+  // ══════════════ MÉTRICAS ═════════════════════
+  const filtrarPorPeriodo = useCallback((items) => {
+    const ahora = new Date();
+    return items.filter(t => {
+      const fecha = new Date(t.fecha);
+      if (periodoMetricas === 'semana') {
+        const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7);
+        return fecha >= hace7;
+      }
+      if (periodoMetricas === 'mes') {
+        return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear();
+      }
+      return true; // "todo"
+    });
+  }, [periodoMetricas]);
+
+  const turnosFiltrados = filtrarPorPeriodo(turnos);
+  const confirmadosFiltrados = turnosFiltrados.filter(t => t.estado === 'confirmado');
+  const canceladosFiltrados = turnosFiltrados.filter(t => t.estado === 'cancelado');
+  const tasaCancelacion = turnosFiltrados.length > 0
+    ? ((canceladosFiltrados.length / turnosFiltrados.length) * 100).toFixed(1) : 0;
+  const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => {
+    const s = servicios.find(s => s.id === t.servicio_id);
+    return sum + (s ? parseFloat(s.precio_pesos) : 0);
+  }, 0);
+
+  // Servicios más pedidos
+  const servicioCount = {};
+  confirmadosFiltrados.forEach(t => {
+    const s = servicios.find(s => s.id === t.servicio_id);
+    const nombre = s ? s.nombre : 'Desconocido';
+    servicioCount[nombre] = (servicioCount[nombre] || 0) + 1;
+  });
+  const topServicios = Object.entries(servicioCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxServicio = topServicios.length > 0 ? topServicios[0][1] : 1;
+
+  // Turnos por día
+  const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const turnosPorDia = Array(7).fill(0);
+  confirmadosFiltrados.forEach(t => { turnosPorDia[new Date(t.fecha).getDay()]++; });
+  const maxDia = Math.max(...turnosPorDia, 1);
+
+  // Horas pico
+  const turnosPorHora = {};
+  confirmadosFiltrados.forEach(t => { const h = t.hora_inicio.split(':')[0]; turnosPorHora[h] = (turnosPorHora[h] || 0) + 1; });
+  const horasOrdenadas = Object.entries(turnosPorHora).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxHora = horasOrdenadas.length > 0 ? horasOrdenadas[0][1] : 1;
+
+  // Clientes frecuentes
+  const clienteMap = {};
+  confirmadosFiltrados.forEach(t => {
+    const key = t.cliente_telefono;
+    if (!clienteMap[key]) clienteMap[key] = { nombre: `${t.cliente_nombre} ${t.cliente_apellido}`, telefono: key, visitas: 0 };
+    clienteMap[key].visitas++;
+  });
+  const topClientes = Object.values(clienteMap).sort((a, b) => b.visitas - a.visitas).slice(0, 5);
 
   // ═══════════════ LOGIN SCREEN ═══════════════
   if (!token) {
@@ -170,11 +206,12 @@ export default function AdminPage() {
   // ═══════════════ DASHBOARD ═══════════════
   const turnosProximos = turnos.filter(t => new Date(t.fecha) >= new Date() && t.estado === 'confirmado')
     .sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio));
-  const turnosHoy = turnos.filter(t => { const hoy = format(new Date(), 'yyyy-MM-dd'); return t.fecha.split('T')[0] === hoy && t.estado === 'confirmado'; });
-
-  // Agrupar horarios por día
-  const horariosPorDia = {};
-  DIAS.forEach((_, idx) => { horariosPorDia[idx] = horarios.filter(h => h.dia_semana === idx); });
+  const turnosHoy = turnos.filter(t => {
+    const hoy = format(new Date(), 'yyyy-MM-dd');
+    return t.fecha.split('T')[0] === hoy && t.estado === 'confirmado';
+  });
+  const horariosPorDia2 = {};
+  DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
 
   return (
     <div>
@@ -192,8 +229,14 @@ export default function AdminPage() {
         <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{servicios.length}</p><p className="text-xs text-[#A89585]">Servicios</p></div>
       </div>
 
-      <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6">
-        {[{ id: 'turnos', label: '📋 Turnos' }, { id: 'servicios', label: '💅 Servicios' }, { id: 'horarios', label: '🕐 Horarios' }, { id: 'bloques', label: '🚫 Bloqueos' }].map(t => (
+      <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6 flex-wrap">
+        {[
+          { id: 'turnos', label: '📋 Turnos' },
+          { id: 'servicios', label: '💅 Servicios' },
+          { id: 'horarios', label: '🕐 Horarios' },
+          { id: 'bloques', label: '🚫 Bloqueos' },
+          { id: 'metricas', label: '📊 Métricas' }
+        ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
@@ -202,7 +245,6 @@ export default function AdminPage() {
       {/* ═══ TURNOS ═══ */}
       {tab === 'turnos' && (
         <div className="animate-fade-up">
-          {/* Botón agregar turno manual */}
           <div className="mb-6">
             <button onClick={() => setMostrarFormTurno(!mostrarFormTurno)}
               className={`btn-primary ${mostrarFormTurno ? 'opacity-70' : ''}`}>
@@ -210,7 +252,6 @@ export default function AdminPage() {
             </button>
           </div>
 
-          {/* Formulario turno manual */}
           {mostrarFormTurno && (
             <div className="card mb-6">
               <h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3>
@@ -312,12 +353,10 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ═══ HORARIOS (múltiples rangos) ═══ */}
+      {/* ═══ HORARIOS ═══ */}
       {tab === 'horarios' && (
         <div className="animate-fade-up">
           <p className="text-sm text-[#A89585] mb-4">Configurá múltiples rangos horarios por día. Ej: Lunes 9:00-13:00 y 15:00-19:00.</p>
-
-          {/* Formulario agregar rango */}
           <div className="card mb-6">
             <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Agregar rango horario</h3>
             <form onSubmit={handleCrearRango} className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -334,11 +373,9 @@ export default function AdminPage() {
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Agregar</button></div>
             </form>
           </div>
-
-          {/* Rangos por día */}
           <div className="space-y-4">
             {DIAS.map((dia, idx) => {
-              const rangos = horariosPorDia[idx] || [];
+              const rangos = horariosPorDia2[idx] || [];
               return (
                 <div key={idx} className="card">
                   <div className="flex items-center justify-between mb-3">
@@ -353,8 +390,7 @@ export default function AdminPage() {
                           <span className="text-[#A89585]">a</span>
                           <input type="time" value={r.hora_fin} onChange={e => handleEditarRango(r.id, 'hora_fin', e.target.value)} className="input-field w-28" />
                           <span className="text-xs text-[#A89585] hidden sm:inline">espacio:</span>
-                          <input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id, 'espacio_entre_turnos_min', parseInt(e.target.value) || 0)}
-                            className="input-field w-16" min="0" />
+                          <input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id, 'espacio_entre_turnos_min', parseInt(e.target.value) || 0)} className="input-field w-16" min="0" />
                           <span className="text-xs text-[#A89585] hidden sm:inline">min</span>
                           <button onClick={() => handleEliminarRango(r.id)} className="text-[#C47070] hover:text-red-700 text-sm cursor-pointer ml-auto">✕</button>
                         </div>
@@ -395,6 +431,139 @@ export default function AdminPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══ MÉTRICAS ═══ */}
+      {tab === 'metricas' && (
+        <div className="animate-fade-up">
+          {/* Filtro periodo */}
+          <div className="flex items-center justify-between mb-6">
+            <p className="text-sm text-[#A89585]">Estadísticas del negocio</p>
+            <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1">
+              {[{ key: 'semana', label: '7 días' }, { key: 'mes', label: 'Este mes' }, { key: 'todo', label: 'Todo' }].map(p => (
+                <button key={p.key} onClick={() => setPeriodoMetricas(p.key)}
+                  className={`py-1.5 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${periodoMetricas === p.key ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* KPIs */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div className="card text-center">
+              <p className="text-2xl font-bold text-[#8B6F5E]">{confirmadosFiltrados.length}</p>
+              <p className="text-xs text-[#A89585]">Turnos confirmados</p>
+              <p className="text-xs text-[#C47070] mt-1">{canceladosFiltrados.length} cancelados</p>
+            </div>
+            <div className="card text-center">
+              <p className="text-2xl font-bold text-[#6B8F6B]">${ingresoEstimado.toLocaleString('es-AR')}</p>
+              <p className="text-xs text-[#A89585]">Ingreso estimado</p>
+            </div>
+            <div className="card text-center">
+              <p className={`text-2xl font-bold ${parseFloat(tasaCancelacion) > 20 ? 'text-[#C47070]' : 'text-[#D4A843]'}`}>{tasaCancelacion}%</p>
+              <p className="text-xs text-[#A89585]">Tasa cancelación</p>
+              <p className="text-xs text-[#A89585] mt-1">{canceladosFiltrados.length}/{turnosFiltrados.length}</p>
+            </div>
+            <div className="card text-center">
+              <p className="text-2xl font-bold text-[#8B6F5E]">{Object.keys(clienteMap).length}</p>
+              <p className="text-xs text-[#A89585]">Clientes únicos</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            {/* Servicios más pedidos */}
+            <div className="card">
+              <h3 className="font-semibold mb-4 text-[#8B6F5E]">💅 Servicios más pedidos</h3>
+              {topServicios.length === 0 ? (
+                <p className="text-sm text-[#A89585]">Sin datos en este periodo</p>
+              ) : (
+                <div className="space-y-3">
+                  {topServicios.map(([nombre, count]) => (
+                    <div key={nombre}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{nombre}</span>
+                        <span className="text-[#A89585]">{count}</span>
+                      </div>
+                      <div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#8B6F5E] rounded-full transition-all duration-500" style={{ width: `${(count / maxServicio) * 100}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Turnos por día */}
+            <div className="card">
+              <h3 className="font-semibold mb-4 text-[#8B6F5E]">📅 Turnos por día</h3>
+              <div className="flex items-end gap-2 h-32">
+                {turnosPorDia.map((count, i) => (
+                  <div key={i} className="flex-1 text-center">
+                    <div
+                      className="mx-auto rounded-t transition-all duration-500"
+                      style={{
+                        height: `${(count / maxDia) * 100}px`,
+                        minHeight: count > 0 ? 8 : 2,
+                        backgroundColor: count > 0 ? '#8B6F5E' : '#E8DDD3',
+                        width: '100%',
+                        maxWidth: 32,
+                      }}
+                    />
+                    <p className="text-xs text-[#A89585] mt-1">{diasNombres[i]}</p>
+                    {count > 0 && <p className="text-xs font-semibold text-[#8B6F5E]">{count}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Horas pico */}
+            <div className="card">
+              <h3 className="font-semibold mb-4 text-[#8B6F5E]">🕐 Horas pico</h3>
+              {horasOrdenadas.length === 0 ? (
+                <p className="text-sm text-[#A89585]">Sin datos</p>
+              ) : (
+                <div className="space-y-3">
+                  {horasOrdenadas.map(([hora, count]) => (
+                    <div key={hora}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{hora}:00 hs</span>
+                        <span className="text-[#A89585]">{count} turnos</span>
+                      </div>
+                      <div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#6B8F6B] rounded-full transition-all duration-500" style={{ width: `${(count / maxHora) * 100}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Clientes frecuentes */}
+            <div className="card">
+              <h3 className="font-semibold mb-4 text-[#8B6F5E]">⭐ Clientes frecuentes</h3>
+              {topClientes.length === 0 ? (
+                <p className="text-sm text-[#A89585]">Sin datos</p>
+              ) : (
+                <div className="space-y-3">
+                  {topClientes.map((c, i) => (
+                    <div key={c.telefono} className={`flex items-center justify-between py-2 ${i < topClientes.length - 1 ? 'border-b border-[#F5F0EB]' : ''}`}>
+                      <div>
+                        <p className="text-sm font-medium">{c.nombre}</p>
+                        <p className="text-xs text-[#A89585]">{c.telefono}</p>
+                      </div>
+                      <span className="text-xs px-2 py-1 rounded-full bg-[#F5F0EB] text-[#8B6F5E] font-semibold">
+                        {c.visitas} {c.visitas === 1 ? 'visita' : 'visitas'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
