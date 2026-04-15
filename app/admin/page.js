@@ -32,6 +32,15 @@ export default function AdminPage() {
   // Estado métricas
   const [periodoMetricas, setPeriodoMetricas] = useState('mes');
 
+  // Estado clientes
+  const [clientes, setClientes] = useState([]);
+  const [busquedaCliente, setBusquedaCliente] = useState('');
+  const [ordenClientes, setOrdenClientes] = useState('frecuencia');
+  const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
+  const [fichaCliente, setFichaCliente] = useState(null);
+  const [loadingFicha, setLoadingFicha] = useState(false);
+  const [nuevaNota, setNuevaNota] = useState('');
+
   useEffect(() => {
     const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null;
     if (saved) setToken(saved);
@@ -46,6 +55,11 @@ export default function AdminPage() {
       .catch(() => setHorariosDisponibles([]));
   }, [turnoManual.fecha, turnoManual.servicio_id]);
 
+  // Cargar clientes cuando se abre la pestaña
+  useEffect(() => {
+    if (tab === 'clientes' && token) loadClientes();
+  }, [tab, token]);
+
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
 
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
@@ -57,6 +71,39 @@ export default function AdminPage() {
   const loadServicios = async () => { try { const res = await api.get('/api/servicios'); setServicios(res.data); } catch (e) {} };
   const loadHorarios = async () => { try { const res = await api.get('/api/horarios'); setHorarios(res.data); } catch (e) {} };
   const loadBloques = async () => { try { const res = await api.get('/api/horarios/bloques-cerrados'); setBloques(res.data); } catch (e) {} };
+  const loadClientes = async () => {
+    try { const res = await api.get('/api/admin/clientes', headers()); setClientes(res.data); }
+    catch (e) {}
+  };
+
+  const loadFichaCliente = async (telefono) => {
+    setLoadingFicha(true);
+    try {
+      const res = await api.get(`/api/admin/clientes/${telefono}`, headers());
+      setFichaCliente(res.data);
+      setClienteSeleccionado(telefono);
+    } catch (e) { showErr('Error cargando ficha del cliente'); }
+    finally { setLoadingFicha(false); }
+  };
+
+  const handleAgregarNota = async () => {
+    if (!nuevaNota.trim() || !clienteSeleccionado) return;
+    try {
+      await api.post(`/api/admin/clientes/${clienteSeleccionado}/notas`, { texto: nuevaNota }, headers());
+      setNuevaNota('');
+      loadFichaCliente(clienteSeleccionado);
+      showMsg('Nota agregada');
+    } catch (e) { showErr('Error al agregar nota'); }
+  };
+
+  const handleEliminarNota = async (notaId) => {
+    if (!confirm('¿Eliminar esta nota?')) return;
+    try {
+      await api.delete(`/api/admin/clientes/${clienteSeleccionado}/notas/${notaId}`, headers());
+      loadFichaCliente(clienteSeleccionado);
+      showMsg('Nota eliminada');
+    } catch (e) { showErr('Error al eliminar nota'); }
+  };
 
   const showMsg = (msg) => { setMensaje(msg); setError(''); setTimeout(() => setMensaje(''), 3000); };
   const showErr = (msg) => { setError(msg); setMensaje(''); setTimeout(() => setError(''), 5000); };
@@ -136,7 +183,7 @@ export default function AdminPage() {
       if (periodoMetricas === 'mes') {
         return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear();
       }
-      return true; // "todo"
+      return true;
     });
   }, [periodoMetricas]);
 
@@ -150,7 +197,6 @@ export default function AdminPage() {
     return sum + (s ? parseFloat(s.precio_pesos) : 0);
   }, 0);
 
-  // Servicios más pedidos
   const servicioCount = {};
   confirmadosFiltrados.forEach(t => {
     const s = servicios.find(s => s.id === t.servicio_id);
@@ -160,26 +206,35 @@ export default function AdminPage() {
   const topServicios = Object.entries(servicioCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const maxServicio = topServicios.length > 0 ? topServicios[0][1] : 1;
 
-  // Turnos por día
   const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
   const turnosPorDia = Array(7).fill(0);
   confirmadosFiltrados.forEach(t => { turnosPorDia[new Date(t.fecha).getDay()]++; });
   const maxDia = Math.max(...turnosPorDia, 1);
 
-  // Horas pico
   const turnosPorHora = {};
   confirmadosFiltrados.forEach(t => { const h = t.hora_inicio.split(':')[0]; turnosPorHora[h] = (turnosPorHora[h] || 0) + 1; });
   const horasOrdenadas = Object.entries(turnosPorHora).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const maxHora = horasOrdenadas.length > 0 ? horasOrdenadas[0][1] : 1;
 
-  // Clientes frecuentes
-  const clienteMap = {};
+  const clienteMapMetricas = {};
   confirmadosFiltrados.forEach(t => {
     const key = t.cliente_telefono;
-    if (!clienteMap[key]) clienteMap[key] = { nombre: `${t.cliente_nombre} ${t.cliente_apellido}`, telefono: key, visitas: 0 };
-    clienteMap[key].visitas++;
+    if (!clienteMapMetricas[key]) clienteMapMetricas[key] = { nombre: `${t.cliente_nombre} ${t.cliente_apellido}`, telefono: key, visitas: 0 };
+    clienteMapMetricas[key].visitas++;
   });
-  const topClientes = Object.values(clienteMap).sort((a, b) => b.visitas - a.visitas).slice(0, 5);
+  const topClientesMetricas = Object.values(clienteMapMetricas).sort((a, b) => b.visitas - a.visitas).slice(0, 5);
+
+  // ══════════════ CLIENTES ═════════════════════
+  const clientesFiltrados = clientes.filter(c => {
+    if (!busquedaCliente) return true;
+    const q = busquedaCliente.toLowerCase();
+    return c.nombre.toLowerCase().includes(q) || c.apellido.toLowerCase().includes(q) || c.telefono.includes(q);
+  }).sort((a, b) => {
+    if (ordenClientes === 'frecuencia') return b.totalConfirmados - a.totalConfirmados;
+    if (ordenClientes === 'reciente') return new Date(b.ultimaVisita) - new Date(a.ultimaVisita);
+    if (ordenClientes === 'gasto') return b.gastoTotal - a.gastoTotal;
+    return 0;
+  });
 
   // ═══════════════ LOGIN SCREEN ═══════════════
   if (!token) {
@@ -235,9 +290,10 @@ export default function AdminPage() {
           { id: 'servicios', label: '💅 Servicios' },
           { id: 'horarios', label: '🕐 Horarios' },
           { id: 'bloques', label: '🚫 Bloqueos' },
-          { id: 'metricas', label: '📊 Métricas' }
+          { id: 'metricas', label: '📊 Métricas' },
+          { id: 'clientes', label: '👤 Clientes' }
         ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => { setTab(t.id); setClienteSeleccionado(null); setFichaCliente(null); }}
             className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
       </div>
@@ -251,18 +307,14 @@ export default function AdminPage() {
               {mostrarFormTurno ? '✕ Cancelar' : '➕ Agregar turno manual'}
             </button>
           </div>
-
           {mostrarFormTurno && (
             <div className="card mb-6">
               <h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3>
               <form onSubmit={handleCrearTurnoManual} className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label>
-                    <input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({ ...turnoManual, nombre: e.target.value })} className="input-field" required /></div>
-                  <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label>
-                    <input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({ ...turnoManual, apellido: e.target.value })} className="input-field" required /></div>
-                  <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label>
-                    <input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({ ...turnoManual, telefono: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({ ...turnoManual, nombre: e.target.value })} className="input-field" required /></div>
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({ ...turnoManual, apellido: e.target.value })} className="input-field" required /></div>
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({ ...turnoManual, telefono: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label>
@@ -270,23 +322,19 @@ export default function AdminPage() {
                       <option value="">Seleccionar...</option>
                       {servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}
                     </select></div>
-                  <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label>
-                    <input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({ ...turnoManual, fecha: e.target.value, hora_inicio: '' })} className="input-field" required /></div>
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({ ...turnoManual, fecha: e.target.value, hora_inicio: '' })} className="input-field" required /></div>
                   <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label>
                     <select value={turnoManual.hora_inicio} onChange={e => setTurnoManual({ ...turnoManual, hora_inicio: e.target.value })} className="input-field" required>
                       <option value="">Seleccionar...</option>
                       {horariosDisponibles.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio} - {h.hora_fin}</option>)}
                     </select>
-                    {turnoManual.fecha && turnoManual.servicio_id && horariosDisponibles.length === 0 && (
-                      <p className="text-xs text-[#C47070] mt-1">Sin horarios disponibles</p>
-                    )}
+                    {turnoManual.fecha && turnoManual.servicio_id && horariosDisponibles.length === 0 && (<p className="text-xs text-[#C47070] mt-1">Sin horarios disponibles</p>)}
                   </div>
                 </div>
                 <button type="submit" disabled={!turnoManual.hora_inicio} className="btn-primary">Crear turno</button>
               </form>
             </div>
           )}
-
           {turnosProximos.length === 0 ? (
             <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p>
           ) : (
@@ -318,12 +366,9 @@ export default function AdminPage() {
           <div className="card mb-6">
             <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo servicio</h3>
             <form onSubmit={handleCrearServicio} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label>
-                <input type="text" value={nuevoServicio.nombre} onChange={e => setNuevoServicio({ ...nuevoServicio, nombre: e.target.value })} placeholder="Ej: Manicura gel" className="input-field" required /></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Duración (min)</label>
-                <input type="number" value={nuevoServicio.duracion_minutos} onChange={e => setNuevoServicio({ ...nuevoServicio, duracion_minutos: parseInt(e.target.value) || 0 })} min="15" step="15" className="input-field" required /></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label>
-                <input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({ ...nuevoServicio, precio_pesos: e.target.value })} placeholder="500" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={nuevoServicio.nombre} onChange={e => setNuevoServicio({ ...nuevoServicio, nombre: e.target.value })} placeholder="Ej: Manicura gel" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Duración (min)</label><input type="number" value={nuevoServicio.duracion_minutos} onChange={e => setNuevoServicio({ ...nuevoServicio, duracion_minutos: parseInt(e.target.value) || 0 })} min="15" step="15" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({ ...nuevoServicio, precio_pesos: e.target.value })} placeholder="500" className="input-field" required /></div>
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Crear</button></div>
             </form>
           </div>
@@ -360,16 +405,10 @@ export default function AdminPage() {
           <div className="card mb-6">
             <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Agregar rango horario</h3>
             <form onSubmit={handleCrearRango} className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <div><label className="text-xs text-[#A89585] mb-1 block">Día</label>
-                <select value={nuevoRango.dia_semana} onChange={e => setNuevoRango({ ...nuevoRango, dia_semana: parseInt(e.target.value) })} className="input-field">
-                  {DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                </select></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Desde</label>
-                <input type="time" value={nuevoRango.hora_inicio} onChange={e => setNuevoRango({ ...nuevoRango, hora_inicio: e.target.value })} className="input-field" required /></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Hasta</label>
-                <input type="time" value={nuevoRango.hora_fin} onChange={e => setNuevoRango({ ...nuevoRango, hora_fin: e.target.value })} className="input-field" required /></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Espacio (min)</label>
-                <input type="number" value={nuevoRango.espacio_entre_turnos_min} onChange={e => setNuevoRango({ ...nuevoRango, espacio_entre_turnos_min: parseInt(e.target.value) || 0 })} min="0" step="5" className="input-field" /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Día</label><select value={nuevoRango.dia_semana} onChange={e => setNuevoRango({ ...nuevoRango, dia_semana: parseInt(e.target.value) })} className="input-field">{DIAS.map((d, i) => <option key={i} value={i}>{d}</option>)}</select></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Desde</label><input type="time" value={nuevoRango.hora_inicio} onChange={e => setNuevoRango({ ...nuevoRango, hora_inicio: e.target.value })} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Hasta</label><input type="time" value={nuevoRango.hora_fin} onChange={e => setNuevoRango({ ...nuevoRango, hora_fin: e.target.value })} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Espacio (min)</label><input type="number" value={nuevoRango.espacio_entre_turnos_min} onChange={e => setNuevoRango({ ...nuevoRango, espacio_entre_turnos_min: parseInt(e.target.value) || 0 })} min="0" step="5" className="input-field" /></div>
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Agregar</button></div>
             </form>
           </div>
@@ -378,25 +417,18 @@ export default function AdminPage() {
               const rangos = horariosPorDia2[idx] || [];
               return (
                 <div key={idx} className="card">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-semibold text-[#2D2A26]">{dia}</h4>
-                    {rangos.length === 0 && <span className="text-sm text-[#C47070]">Cerrado (sin rangos)</span>}
-                  </div>
-                  {rangos.length > 0 && (
-                    <div className="space-y-2">
-                      {rangos.map(r => (
-                        <div key={r.id} className="flex items-center gap-3 bg-[#F5F0EB] rounded-lg p-3">
-                          <input type="time" value={r.hora_inicio} onChange={e => handleEditarRango(r.id, 'hora_inicio', e.target.value)} className="input-field w-28" />
-                          <span className="text-[#A89585]">a</span>
-                          <input type="time" value={r.hora_fin} onChange={e => handleEditarRango(r.id, 'hora_fin', e.target.value)} className="input-field w-28" />
-                          <span className="text-xs text-[#A89585] hidden sm:inline">espacio:</span>
-                          <input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id, 'espacio_entre_turnos_min', parseInt(e.target.value) || 0)} className="input-field w-16" min="0" />
-                          <span className="text-xs text-[#A89585] hidden sm:inline">min</span>
-                          <button onClick={() => handleEliminarRango(r.id)} className="text-[#C47070] hover:text-red-700 text-sm cursor-pointer ml-auto">✕</button>
-                        </div>
-                      ))}
+                  <div className="flex items-center justify-between mb-3"><h4 className="font-semibold text-[#2D2A26]">{dia}</h4>{rangos.length === 0 && <span className="text-sm text-[#C47070]">Cerrado (sin rangos)</span>}</div>
+                  {rangos.length > 0 && (<div className="space-y-2">{rangos.map(r => (
+                    <div key={r.id} className="flex items-center gap-3 bg-[#F5F0EB] rounded-lg p-3">
+                      <input type="time" value={r.hora_inicio} onChange={e => handleEditarRango(r.id, 'hora_inicio', e.target.value)} className="input-field w-28" />
+                      <span className="text-[#A89585]">a</span>
+                      <input type="time" value={r.hora_fin} onChange={e => handleEditarRango(r.id, 'hora_fin', e.target.value)} className="input-field w-28" />
+                      <span className="text-xs text-[#A89585] hidden sm:inline">espacio:</span>
+                      <input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id, 'espacio_entre_turnos_min', parseInt(e.target.value) || 0)} className="input-field w-16" min="0" />
+                      <span className="text-xs text-[#A89585] hidden sm:inline">min</span>
+                      <button onClick={() => handleEliminarRango(r.id)} className="text-[#C47070] hover:text-red-700 text-sm cursor-pointer ml-auto">✕</button>
                     </div>
-                  )}
+                  ))}</div>)}
                 </div>
               );
             })}
@@ -411,25 +443,18 @@ export default function AdminPage() {
           <div className="card mb-6">
             <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo bloqueo</h3>
             <form onSubmit={handleCrearBloque} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label>
-                <input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({ ...nuevoBloque, fecha: e.target.value })} className="input-field" required /></div>
-              <div><label className="text-xs text-[#A89585] mb-1 block">Motivo (opcional)</label>
-                <input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({ ...nuevoBloque, motivo: e.target.value })} placeholder="Ej: Feriado" className="input-field" /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({ ...nuevoBloque, fecha: e.target.value })} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Motivo (opcional)</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({ ...nuevoBloque, motivo: e.target.value })} placeholder="Ej: Feriado" className="input-field" /></div>
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Bloquear día</button></div>
             </form>
           </div>
-          {bloques.length === 0 ? (
-            <p className="text-center text-[#A89585] py-8">No hay días bloqueados</p>
-          ) : (
-            <div className="space-y-3">
-              {bloques.map(b => (
-                <div key={b.id} className="card flex items-center justify-between">
-                  <div><p className="font-semibold">{format(new Date(b.fecha), "EEEE d 'de' MMMM yyyy", { locale: es })}</p>
-                    {b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}</div>
-                  <button onClick={() => handleEliminarBloque(b.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button>
-                </div>
-              ))}
-            </div>
+          {bloques.length === 0 ? (<p className="text-center text-[#A89585] py-8">No hay días bloqueados</p>) : (
+            <div className="space-y-3">{bloques.map(b => (
+              <div key={b.id} className="card flex items-center justify-between">
+                <div><p className="font-semibold">{format(new Date(b.fecha), "EEEE d 'de' MMMM yyyy", { locale: es })}</p>{b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}</div>
+                <button onClick={() => handleEliminarBloque(b.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button>
+              </div>
+            ))}</div>
           )}
         </div>
       )}
@@ -437,133 +462,187 @@ export default function AdminPage() {
       {/* ═══ MÉTRICAS ═══ */}
       {tab === 'metricas' && (
         <div className="animate-fade-up">
-          {/* Filtro periodo */}
           <div className="flex items-center justify-between mb-6">
             <p className="text-sm text-[#A89585]">Estadísticas del negocio</p>
             <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1">
               {[{ key: 'semana', label: '7 días' }, { key: 'mes', label: 'Este mes' }, { key: 'todo', label: 'Todo' }].map(p => (
                 <button key={p.key} onClick={() => setPeriodoMetricas(p.key)}
-                  className={`py-1.5 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${periodoMetricas === p.key ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>
-                  {p.label}
-                </button>
+                  className={`py-1.5 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${periodoMetricas === p.key ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{p.label}</button>
               ))}
             </div>
           </div>
-
-          {/* KPIs */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-            <div className="card text-center">
-              <p className="text-2xl font-bold text-[#8B6F5E]">{confirmadosFiltrados.length}</p>
-              <p className="text-xs text-[#A89585]">Turnos confirmados</p>
-              <p className="text-xs text-[#C47070] mt-1">{canceladosFiltrados.length} cancelados</p>
-            </div>
-            <div className="card text-center">
-              <p className="text-2xl font-bold text-[#6B8F6B]">${ingresoEstimado.toLocaleString('es-AR')}</p>
-              <p className="text-xs text-[#A89585]">Ingreso estimado</p>
-            </div>
-            <div className="card text-center">
-              <p className={`text-2xl font-bold ${parseFloat(tasaCancelacion) > 20 ? 'text-[#C47070]' : 'text-[#D4A843]'}`}>{tasaCancelacion}%</p>
-              <p className="text-xs text-[#A89585]">Tasa cancelación</p>
-              <p className="text-xs text-[#A89585] mt-1">{canceladosFiltrados.length}/{turnosFiltrados.length}</p>
-            </div>
-            <div className="card text-center">
-              <p className="text-2xl font-bold text-[#8B6F5E]">{Object.keys(clienteMap).length}</p>
-              <p className="text-xs text-[#A89585]">Clientes únicos</p>
-            </div>
+            <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{confirmadosFiltrados.length}</p><p className="text-xs text-[#A89585]">Turnos confirmados</p><p className="text-xs text-[#C47070] mt-1">{canceladosFiltrados.length} cancelados</p></div>
+            <div className="card text-center"><p className="text-2xl font-bold text-[#6B8F6B]">${ingresoEstimado.toLocaleString('es-AR')}</p><p className="text-xs text-[#A89585]">Ingreso estimado</p></div>
+            <div className="card text-center"><p className={`text-2xl font-bold ${parseFloat(tasaCancelacion) > 20 ? 'text-[#C47070]' : 'text-[#D4A843]'}`}>{tasaCancelacion}%</p><p className="text-xs text-[#A89585]">Tasa cancelación</p><p className="text-xs text-[#A89585] mt-1">{canceladosFiltrados.length}/{turnosFiltrados.length}</p></div>
+            <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{Object.keys(clienteMapMetricas).length}</p><p className="text-xs text-[#A89585]">Clientes únicos</p></div>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            {/* Servicios más pedidos */}
-            <div className="card">
-              <h3 className="font-semibold mb-4 text-[#8B6F5E]">💅 Servicios más pedidos</h3>
-              {topServicios.length === 0 ? (
-                <p className="text-sm text-[#A89585]">Sin datos en este periodo</p>
-              ) : (
-                <div className="space-y-3">
-                  {topServicios.map(([nombre, count]) => (
-                    <div key={nombre}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span>{nombre}</span>
-                        <span className="text-[#A89585]">{count}</span>
-                      </div>
-                      <div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden">
-                        <div className="h-full bg-[#8B6F5E] rounded-full transition-all duration-500" style={{ width: `${(count / maxServicio) * 100}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            <div className="card"><h3 className="font-semibold mb-4 text-[#8B6F5E]">💅 Servicios más pedidos</h3>
+              {topServicios.length === 0 ? <p className="text-sm text-[#A89585]">Sin datos en este periodo</p> : (
+                <div className="space-y-3">{topServicios.map(([nombre, count]) => (<div key={nombre}><div className="flex justify-between text-sm mb-1"><span>{nombre}</span><span className="text-[#A89585]">{count}</span></div><div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden"><div className="h-full bg-[#8B6F5E] rounded-full transition-all duration-500" style={{ width: `${(count / maxServicio) * 100}%` }} /></div></div>))}</div>
               )}
             </div>
-
-            {/* Turnos por día */}
-            <div className="card">
-              <h3 className="font-semibold mb-4 text-[#8B6F5E]">📅 Turnos por día</h3>
-              <div className="flex items-end gap-2 h-32">
-                {turnosPorDia.map((count, i) => (
-                  <div key={i} className="flex-1 text-center">
-                    <div
-                      className="mx-auto rounded-t transition-all duration-500"
-                      style={{
-                        height: `${(count / maxDia) * 100}px`,
-                        minHeight: count > 0 ? 8 : 2,
-                        backgroundColor: count > 0 ? '#8B6F5E' : '#E8DDD3',
-                        width: '100%',
-                        maxWidth: 32,
-                      }}
-                    />
-                    <p className="text-xs text-[#A89585] mt-1">{diasNombres[i]}</p>
-                    {count > 0 && <p className="text-xs font-semibold text-[#8B6F5E]">{count}</p>}
-                  </div>
-                ))}
-              </div>
+            <div className="card"><h3 className="font-semibold mb-4 text-[#8B6F5E]">📅 Turnos por día</h3>
+              <div className="flex items-end gap-2 h-32">{turnosPorDia.map((count, i) => (<div key={i} className="flex-1 text-center"><div className="mx-auto rounded-t transition-all duration-500" style={{ height: `${(count / maxDia) * 100}px`, minHeight: count > 0 ? 8 : 2, backgroundColor: count > 0 ? '#8B6F5E' : '#E8DDD3', width: '100%', maxWidth: 32 }} /><p className="text-xs text-[#A89585] mt-1">{diasNombres[i]}</p>{count > 0 && <p className="text-xs font-semibold text-[#8B6F5E]">{count}</p>}</div>))}</div>
             </div>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Horas pico */}
-            <div className="card">
-              <h3 className="font-semibold mb-4 text-[#8B6F5E]">🕐 Horas pico</h3>
-              {horasOrdenadas.length === 0 ? (
-                <p className="text-sm text-[#A89585]">Sin datos</p>
-              ) : (
-                <div className="space-y-3">
-                  {horasOrdenadas.map(([hora, count]) => (
-                    <div key={hora}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span>{hora}:00 hs</span>
-                        <span className="text-[#A89585]">{count} turnos</span>
-                      </div>
-                      <div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden">
-                        <div className="h-full bg-[#6B8F6B] rounded-full transition-all duration-500" style={{ width: `${(count / maxHora) * 100}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            <div className="card"><h3 className="font-semibold mb-4 text-[#8B6F5E]">🕐 Horas pico</h3>
+              {horasOrdenadas.length === 0 ? <p className="text-sm text-[#A89585]">Sin datos</p> : (
+                <div className="space-y-3">{horasOrdenadas.map(([hora, count]) => (<div key={hora}><div className="flex justify-between text-sm mb-1"><span>{hora}:00 hs</span><span className="text-[#A89585]">{count} turnos</span></div><div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden"><div className="h-full bg-[#6B8F6B] rounded-full transition-all duration-500" style={{ width: `${(count / maxHora) * 100}%` }} /></div></div>))}</div>
               )}
             </div>
+            <div className="card"><h3 className="font-semibold mb-4 text-[#8B6F5E]">⭐ Clientes frecuentes</h3>
+              {topClientesMetricas.length === 0 ? <p className="text-sm text-[#A89585]">Sin datos</p> : (
+                <div className="space-y-3">{topClientesMetricas.map((c, i) => (<div key={c.telefono} className={`flex items-center justify-between py-2 ${i < topClientesMetricas.length - 1 ? 'border-b border-[#F5F0EB]' : ''}`}><div><p className="text-sm font-medium">{c.nombre}</p><p className="text-xs text-[#A89585]">{c.telefono}</p></div><span className="text-xs px-2 py-1 rounded-full bg-[#F5F0EB] text-[#8B6F5E] font-semibold">{c.visitas} {c.visitas === 1 ? 'visita' : 'visitas'}</span></div>))}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Clientes frecuentes */}
-            <div className="card">
-              <h3 className="font-semibold mb-4 text-[#8B6F5E]">⭐ Clientes frecuentes</h3>
-              {topClientes.length === 0 ? (
-                <p className="text-sm text-[#A89585]">Sin datos</p>
-              ) : (
-                <div className="space-y-3">
-                  {topClientes.map((c, i) => (
-                    <div key={c.telefono} className={`flex items-center justify-between py-2 ${i < topClientes.length - 1 ? 'border-b border-[#F5F0EB]' : ''}`}>
-                      <div>
-                        <p className="text-sm font-medium">{c.nombre}</p>
-                        <p className="text-xs text-[#A89585]">{c.telefono}</p>
+      {/* ═══ CLIENTES ═══ */}
+      {tab === 'clientes' && (
+        <div className="animate-fade-up">
+
+          {/* Vista ficha cliente */}
+          {clienteSeleccionado && fichaCliente ? (
+            <div>
+              <button onClick={() => { setClienteSeleccionado(null); setFichaCliente(null); }}
+                className="text-sm text-[#8B6F5E] hover:underline cursor-pointer mb-4 inline-block">
+                ← Volver a la lista
+              </button>
+
+              {/* Info del cliente */}
+              <div className="card mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-semibold text-[#2D2A26]">
+                      {fichaCliente.turnos[0]?.cliente_nombre} {fichaCliente.turnos[0]?.cliente_apellido}
+                    </h3>
+                    <p className="text-sm text-[#A89585]">📱 {clienteSeleccionado}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-[#8B6F5E]">{fichaCliente.turnos.filter(t => t.estado === 'confirmado').length}</p>
+                    <p className="text-xs text-[#A89585]">visitas</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mt-4">
+                  <div className="bg-[#F5F0EB] rounded-lg p-3 text-center">
+                    <p className="text-sm font-bold text-[#6B8F6B]">${fichaCliente.turnos.filter(t => t.estado === 'confirmado').reduce((s, t) => s + (t.servicio ? parseFloat(t.servicio.precio_pesos) : 0), 0).toLocaleString('es-AR')}</p>
+                    <p className="text-xs text-[#A89585]">Gasto total</p>
+                  </div>
+                  <div className="bg-[#F5F0EB] rounded-lg p-3 text-center">
+                    <p className="text-sm font-bold text-[#8B6F5E]">{format(new Date(fichaCliente.turnos[fichaCliente.turnos.length - 1]?.fecha), "d/M/yy")}</p>
+                    <p className="text-xs text-[#A89585]">Primera visita</p>
+                  </div>
+                  <div className="bg-[#F5F0EB] rounded-lg p-3 text-center">
+                    <p className="text-sm font-bold text-[#8B6F5E]">{format(new Date(fichaCliente.turnos[0]?.fecha), "d/M/yy")}</p>
+                    <p className="text-xs text-[#A89585]">Última visita</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Notas */}
+              <div className="card mb-4">
+                <h4 className="font-semibold text-[#8B6F5E] mb-3">📝 Notas</h4>
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={nuevaNota}
+                    onChange={e => setNuevaNota(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAgregarNota()}
+                    placeholder="Ej: Prefiere esmalte semipermanente, alérgica a..."
+                    className="input-field flex-1"
+                  />
+                  <button onClick={handleAgregarNota} disabled={!nuevaNota.trim()} className="btn-primary">Agregar</button>
+                </div>
+                {fichaCliente.notas.length === 0 ? (
+                  <p className="text-sm text-[#A89585]">Sin notas todavía</p>
+                ) : (
+                  <div className="space-y-2">
+                    {fichaCliente.notas.map(nota => (
+                      <div key={nota.id} className="flex items-start justify-between bg-[#FFFBF0] border border-[#F5EDD6] rounded-lg p-3">
+                        <div>
+                          <p className="text-sm">{nota.texto}</p>
+                          <p className="text-xs text-[#A89585] mt-1">{format(new Date(nota.created_at), "d MMM yyyy, HH:mm", { locale: es })}</p>
+                        </div>
+                        <button onClick={() => handleEliminarNota(nota.id)} className="text-xs text-[#C47070] hover:underline cursor-pointer ml-2">✕</button>
                       </div>
-                      <span className="text-xs px-2 py-1 rounded-full bg-[#F5F0EB] text-[#8B6F5E] font-semibold">
-                        {c.visitas} {c.visitas === 1 ? 'visita' : 'visitas'}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Historial de turnos */}
+              <div className="card">
+                <h4 className="font-semibold text-[#8B6F5E] mb-3">📋 Historial de turnos</h4>
+                <div className="space-y-2">
+                  {fichaCliente.turnos.map(t => (
+                    <div key={t.id} className="flex items-center justify-between py-2 border-b border-[#F5F0EB] last:border-0">
+                      <div>
+                        <p className="text-sm font-medium">{format(new Date(t.fecha), "EEE d MMM yyyy", { locale: es })} · {t.hora_inicio} hs</p>
+                        <p className="text-xs text-[#A89585]">{t.servicio?.nombre}</p>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${t.estado === 'confirmado' ? 'bg-[#E8F5E8] text-[#6B8F6B]' : 'bg-red-50 text-[#C47070]'}`}>
+                        {t.estado}
                       </span>
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          ) : (
+            /* Vista lista de clientes */
+            <div>
+              <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                <input
+                  type="text"
+                  value={busquedaCliente}
+                  onChange={e => setBusquedaCliente(e.target.value)}
+                  placeholder="🔍 Buscar por nombre o teléfono..."
+                  className="input-field flex-1"
+                />
+                <select value={ordenClientes} onChange={e => setOrdenClientes(e.target.value)} className="input-field w-auto">
+                  <option value="frecuencia">Más frecuentes</option>
+                  <option value="reciente">Más recientes</option>
+                  <option value="gasto">Mayor gasto</option>
+                </select>
+              </div>
+
+              {clientesFiltrados.length === 0 ? (
+                <p className="text-center text-[#A89585] py-8">
+                  {busquedaCliente ? 'No se encontraron clientes' : 'No hay clientes registrados'}
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {clientesFiltrados.map(c => (
+                    <div key={c.telefono} className="card cursor-pointer hover:shadow-md transition-shadow"
+                      onClick={() => loadFichaCliente(c.telefono)}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold">{c.nombre} {c.apellido}</p>
+                          <p className="text-xs text-[#A89585]">📱 {c.telefono}</p>
+                          <div className="flex gap-2 mt-1">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">💅 {c.servicioFavorito}</span>
+                            {parseFloat(c.tasaCancelacion) > 30 && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-[#C47070]">⚠️ {c.tasaCancelacion}% cancel.</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-[#8B6F5E]">{c.totalConfirmados}</p>
+                          <p className="text-xs text-[#A89585]">visitas</p>
+                          <p className="text-xs text-[#6B8F6B] font-semibold">${c.gastoTotal.toLocaleString('es-AR')}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
