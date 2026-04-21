@@ -19,8 +19,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
-  const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '' });
-  const [editandoServicio, setEditandoServicio] = useState(null);
+const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2 });  const [editandoServicio, setEditandoServicio] = useState(null);
   const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '' });
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
@@ -64,8 +63,7 @@ export default function AdminPage() {
   const handleLogout = () => { setToken(null); sessionStorage.removeItem('admin_token'); };
 
   const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
-  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos) }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
-  const handleDesactivarServicio = async (id) => { if (!confirm('¿Desactivar?')) return; try { await api.delete(`/api/servicios/${id}`, headers()); showMsg('Desactivado'); loadServicios(); } catch (err) { showErr('Error'); } };
+  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2 }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
 
   const handleCrearRango = async (e) => { e.preventDefault(); try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
@@ -136,8 +134,113 @@ export default function AdminPage() {
         {turnosProximos.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p> : (<div className="space-y-3">{turnosProximos.map(turno => (<div key={turno.id} className="card flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(new Date(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div></div></div>))}</div>)}
       </div>)}
 
-      {/* SERVICIOS */}
-      {tab === 'servicios' && (<div className="animate-fade-up"><div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo servicio</h3><form onSubmit={handleCrearServicio} className="grid grid-cols-1 sm:grid-cols-4 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={nuevoServicio.nombre} onChange={e => setNuevoServicio({...nuevoServicio, nombre: e.target.value})} placeholder="Ej: Manicura gel" className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Duración (min)</label><input type="number" value={nuevoServicio.duracion_minutos} onChange={e => setNuevoServicio({...nuevoServicio, duracion_minutos: parseInt(e.target.value)||0})} min="15" step="15" className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({...nuevoServicio, precio_pesos: e.target.value})} placeholder="500" className="input-field" required /></div><div className="flex items-end"><button type="submit" className="btn-primary w-full">Crear</button></div></form></div><div className="space-y-3">{servicios.map(s => (<div key={s.id} className="card">{editandoServicio?.id === s.id ? (<form onSubmit={handleEditarServicio} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"><div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoServicio.nombre} onChange={e => setEditandoServicio({...editandoServicio, nombre: e.target.value})} className="input-field" /></div><div><label className="text-xs text-[#A89585] mb-1 block">Duración</label><input type="number" value={editandoServicio.duracion_minutos} onChange={e => setEditandoServicio({...editandoServicio, duracion_minutos: e.target.value})} className="input-field" /></div><div><label className="text-xs text-[#A89585] mb-1 block">Precio</label><input type="number" value={editandoServicio.precio_pesos} onChange={e => setEditandoServicio({...editandoServicio, precio_pesos: e.target.value})} className="input-field" /></div><div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Guardar</button><button type="button" onClick={() => setEditandoServicio(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div></form>) : (<div className="flex items-center justify-between"><div><p className="font-semibold">{s.nombre}</p><p className="text-sm text-[#A89585]">{s.duracion_minutos} min</p></div><div className="flex items-center gap-4"><p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p><button onClick={() => setEditandoServicio({...s})} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleDesactivarServicio(s.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Desactivar</button></div></div>)}</div>))}</div></div>)}
+{/* SERVICIOS */}
+      {tab === 'servicios' && (<div className="animate-fade-up">
+        <div className="card mb-6">
+          <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo servicio</h3>
+          <form onSubmit={handleCrearServicio} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={nuevoServicio.nombre} onChange={e => setNuevoServicio({...nuevoServicio, nombre: e.target.value})} placeholder="Ej: Manicura gel" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Duración (min)</label><input type="number" value={nuevoServicio.duracion_minutos} onChange={e => setNuevoServicio({...nuevoServicio, duracion_minutos: parseInt(e.target.value)||0})} min="15" step="15" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({...nuevoServicio, precio_pesos: e.target.value})} placeholder="500" className="input-field" required /></div>
+              <div className="flex items-end"><button type="submit" className="btn-primary w-full">Crear</button></div>
+            </div>
+            <div className="border-t border-[#F5F0EB] pt-4">
+              <label className="flex items-center gap-2 cursor-pointer mb-3">
+                <input type="checkbox" checked={nuevoServicio.intercalable} onChange={e => setNuevoServicio({...nuevoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                <span className="text-sm font-medium text-[#8B6F5E]">Permitir intercalar con otros servicios</span>
+              </label>
+              {nuevoServicio.intercalable && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Intercalar desde el minuto</label><input type="number" value={nuevoServicio.intercalar_desde_min} onChange={e => setNuevoServicio({...nuevoServicio, intercalar_desde_min: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div>
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Máximo simultáneos</label><input type="number" value={nuevoServicio.max_simultaneos} onChange={e => setNuevoServicio({...nuevoServicio, max_simultaneos: parseInt(e.target.value)||1})} min="1" step="1" className="input-field" /></div>
+                  {servicios.length > 0 && (
+                    <div className="sm:col-span-2">
+                      <label className="text-xs text-[#A89585] mb-2 block">Servicios compatibles</label>
+                      <div className="flex flex-wrap gap-2">
+                        {servicios.map(sc => {
+                          const checked = nuevoServicio.servicios_compatibles.includes(sc.id);
+                          return (
+                            <label key={sc.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs cursor-pointer border ${checked ? 'bg-[#8B6F5E] text-white border-[#8B6F5E]' : 'bg-white text-[#8B6F5E] border-[#E8DDD3]'}`}>
+                              <input type="checkbox" checked={checked} onChange={e => { const next = e.target.checked ? [...nuevoServicio.servicios_compatibles, sc.id] : nuevoServicio.servicios_compatibles.filter(id => id !== sc.id); setNuevoServicio({...nuevoServicio, servicios_compatibles: next}); }} className="hidden" />
+                              {sc.nombre}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </form>
+        </div>
+        <div className="space-y-3">{servicios.map(s => (
+          <div key={s.id} className="card">{editandoServicio?.id === s.id ? (
+            <form onSubmit={handleEditarServicio} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoServicio.nombre} onChange={e => setEditandoServicio({...editandoServicio, nombre: e.target.value})} className="input-field" /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">Duración</label><input type="number" value={editandoServicio.duracion_minutos} onChange={e => setEditandoServicio({...editandoServicio, duracion_minutos: e.target.value})} className="input-field" /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">Precio</label><input type="number" value={editandoServicio.precio_pesos} onChange={e => setEditandoServicio({...editandoServicio, precio_pesos: e.target.value})} className="input-field" /></div>
+                <div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Guardar</button><button type="button" onClick={() => setEditandoServicio(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div>
+              </div>
+              <div className="border-t border-[#F5F0EB] pt-4">
+                <label className="flex items-center gap-2 cursor-pointer mb-3">
+                  <input type="checkbox" checked={!!editandoServicio.intercalable} onChange={e => setEditandoServicio({...editandoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                  <span className="text-sm font-medium text-[#8B6F5E]">Permitir intercalar con otros servicios</span>
+                </label>
+                {editandoServicio.intercalable && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
+                    <div><label className="text-xs text-[#A89585] mb-1 block">Intercalar desde el minuto</label><input type="number" value={editandoServicio.intercalar_desde_min ?? 0} onChange={e => setEditandoServicio({...editandoServicio, intercalar_desde_min: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div>
+                    <div><label className="text-xs text-[#A89585] mb-1 block">Máximo simultáneos</label><input type="number" value={editandoServicio.max_simultaneos ?? 2} onChange={e => setEditandoServicio({...editandoServicio, max_simultaneos: parseInt(e.target.value)||1})} min="1" step="1" className="input-field" /></div>
+                    <div className="sm:col-span-2">
+                      <label className="text-xs text-[#A89585] mb-2 block">Servicios compatibles</label>
+                      <div className="flex flex-wrap gap-2">
+                        {servicios.filter(sc => sc.id !== editandoServicio.id).map(sc => {
+                          const actuales = Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles : [];
+                          const checked = actuales.includes(sc.id);
+                          return (
+                            <label key={sc.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs cursor-pointer border ${checked ? 'bg-[#8B6F5E] text-white border-[#8B6F5E]' : 'bg-white text-[#8B6F5E] border-[#E8DDD3]'}`}>
+                              <input type="checkbox" checked={checked} onChange={e => { const next = e.target.checked ? [...actuales, sc.id] : actuales.filter(id => id !== sc.id); setEditandoServicio({...editandoServicio, servicios_compatibles: next}); }} className="hidden" />
+                              {sc.nombre}
+                            </label>
+                          );
+                        })}
+                        {servicios.filter(sc => sc.id !== editandoServicio.id).length === 0 && <p className="text-xs text-[#A89585]">No hay otros servicios para seleccionar</p>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </form>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">{s.nombre}</p>
+                <p className="text-sm text-[#A89585]">{s.duracion_minutos} min</p>
+                {s.intercalable && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🔀 Intercalable desde min {s.intercalar_desde_min ?? 0}</span>
+                    {Array.isArray(s.servicios_compatibles) && s.servicios_compatibles.length > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">
+                        Con: {s.servicios_compatibles.map(id => servicios.find(x => x.id === id)?.nombre).filter(Boolean).join(', ')}
+                      </span>
+                    )}
+                    {s.max_simultaneos > 1 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">Máx {s.max_simultaneos} a la vez</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-4">
+                <p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p>
+                <button onClick={() => setEditandoServicio({...s, servicios_compatibles: Array.isArray(s.servicios_compatibles) ? [...s.servicios_compatibles] : [], intercalar_desde_min: s.intercalar_desde_min ?? 0, max_simultaneos: s.max_simultaneos ?? 2, intercalable: !!s.intercalable})} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button>
+                <button onClick={() => handleDesactivarServicio(s.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Desactivar</button>
+              </div>
+            </div>
+          )}</div>
+        ))}</div>
+      </div>)}
 
       {/* HORARIOS */}
       {tab === 'horarios' && (<div className="animate-fade-up"><p className="text-sm text-[#A89585] mb-4">Configurá múltiples rangos horarios por día.</p><div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Agregar rango horario</h3><form onSubmit={handleCrearRango} className="grid grid-cols-2 sm:grid-cols-5 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Día</label><select value={nuevoRango.dia_semana} onChange={e => setNuevoRango({...nuevoRango, dia_semana: parseInt(e.target.value)})} className="input-field">{DIAS.map((d,i) => <option key={i} value={i}>{d}</option>)}</select></div><div><label className="text-xs text-[#A89585] mb-1 block">Desde</label><input type="time" value={nuevoRango.hora_inicio} onChange={e => setNuevoRango({...nuevoRango, hora_inicio: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Hasta</label><input type="time" value={nuevoRango.hora_fin} onChange={e => setNuevoRango({...nuevoRango, hora_fin: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Espacio (min)</label><input type="number" value={nuevoRango.espacio_entre_turnos_min} onChange={e => setNuevoRango({...nuevoRango, espacio_entre_turnos_min: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div><div className="flex items-end"><button type="submit" className="btn-primary w-full">Agregar</button></div></form></div><div className="space-y-4">{DIAS.map((dia, idx) => { const rangos = horariosPorDia2[idx] || []; return (<div key={idx} className="card"><div className="flex items-center justify-between mb-3"><h4 className="font-semibold text-[#2D2A26]">{dia}</h4>{rangos.length === 0 && <span className="text-sm text-[#C47070]">Cerrado</span>}</div>{rangos.length > 0 && (<div className="space-y-2">{rangos.map(r => (<div key={r.id} className="flex items-center gap-3 bg-[#F5F0EB] rounded-lg p-3"><input type="time" value={r.hora_inicio} onChange={e => handleEditarRango(r.id,'hora_inicio',e.target.value)} className="input-field w-28" /><span className="text-[#A89585]">a</span><input type="time" value={r.hora_fin} onChange={e => handleEditarRango(r.id,'hora_fin',e.target.value)} className="input-field w-28" /><span className="text-xs text-[#A89585] hidden sm:inline">espacio:</span><input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id,'espacio_entre_turnos_min',parseInt(e.target.value)||0)} className="input-field w-16" min="0" /><span className="text-xs text-[#A89585] hidden sm:inline">min</span><button onClick={() => handleEliminarRango(r.id)} className="text-[#C47070] hover:text-red-700 text-sm cursor-pointer ml-auto">✕</button></div>))}</div>)}</div>); })}</div></div>)}
