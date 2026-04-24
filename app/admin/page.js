@@ -63,6 +63,16 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   const handleLogout = () => { setToken(null); sessionStorage.removeItem('admin_token'); };
 
   const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
+const handleDesactivarServicio = async (id) => {
+  if (!confirm('¿Desactivar este servicio? Ya no aparecerá para reservas.')) return;
+  try {
+    await api.patch(`/api/servicios/${id}`, { activo: false }, headers());
+    showMsg('Servicio desactivado');
+    loadServicios();
+  } catch (err) {
+    showErr('Error al desactivar');
+  }
+};
   const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2 }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
 
   const handleCrearRango = async (e) => { e.preventDefault(); try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
