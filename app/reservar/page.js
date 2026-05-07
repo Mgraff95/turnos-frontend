@@ -48,8 +48,24 @@ export default function ReservarPage() {
       .finally(() => { setLoading(false); setHorariosLoaded(true); });
   }, [fechaSeleccionada, servicioSeleccionado]);
 
+const [diasHabilitados, setDiasHabilitados] = useState([]);
+
+  useEffect(() => {
+    api.get('/api/horarios')
+      .then(res => {
+        const dias = [...new Set(res.data.map(h => h.dia_semana))];
+        setDiasHabilitados(dias);
+      })
+      .catch(() => {});
+  }, []);
+
+  // dia_semana en DB: 0=Lunes ... 6=Domingo
+  // getDay() de JS: 0=Domingo, 1=Lunes ... 6=Sábado
+  const diaJsToDB = (jsDay) => jsDay === 0 ? 6 : jsDay - 1;
+
   const hoy = startOfToday();
-  const proxDias = Array.from({ length: 30 }, (_, i) => addDays(hoy, i + 1));
+  const proxDias = Array.from({ length: 60 }, (_, i) => addDays(hoy, i + 1))
+    .filter(dia => diasHabilitados.includes(diaJsToDB(dia.getDay())));
 
   // Detectar si faltan franjas
   const tieneMañana = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) < 14);
