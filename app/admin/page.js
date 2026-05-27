@@ -111,7 +111,8 @@ const handleDesactivarServicio = async (id) => {
   // LOGIN
   if (!token) { return ( <div className="max-w-sm mx-auto mt-16"><div className="text-center mb-8"><span className="text-4xl">🔐</span><h2 className="font-[family-name:var(--font-playfair)] text-2xl font-bold text-[#8B6F5E] mt-3">Admin</h2></div><form onSubmit={handleLogin} className="card animate-fade-up">{loginError && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-4 text-sm">{loginError}</div>}<div className="space-y-4"><div><label className="text-sm text-[#A89585] mb-1 block">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="input-field" required /></div><div><label className="text-sm text-[#A89585] mb-1 block">Contraseña</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input-field" required /></div><button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Entrando...' : 'Entrar'}</button></div></form></div> ); }
 
-  const turnosProximos = turnos.filter(t => new Date(t.fecha) >= new Date() && t.estado === 'confirmado').sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio));
+  const hoyStr = format(new Date(), 'yyyy-MM-dd');
+const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.estado === 'confirmado').sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio));
   const turnosHoy = turnos.filter(t => { const hoy = format(new Date(), 'yyyy-MM-dd'); return t.fecha.split('T')[0] === hoy && t.estado === 'confirmado'; });
   const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
 
