@@ -6,6 +6,10 @@ import { es } from 'date-fns/locale';
 
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
+// Convierte una fecha date-only ("2026-06-20" o "2026-06-20T00:00:00.000Z")
+// en un Date anclado al MEDIODÍA local, para que nunca se corra de día por la zona horaria (UTC-3).
+const fechaLocal = (f) => new Date(String(f).split('T')[0] + 'T12:00:00');
+
 export default function AdminPage() {
   const [token, setToken] = useState(null);
   const [email, setEmail] = useState('');
@@ -25,6 +29,8 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
   const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' });
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  const [editandoTurno, setEditandoTurno] = useState(null);
+  const [horariosEditTurno, setHorariosEditTurno] = useState([]);
   const [periodoMetricas, setPeriodoMetricas] = useState('mes');
   const [clientes, setClientes] = useState([]);
   const [busquedaCliente, setBusquedaCliente] = useState('');
@@ -35,12 +41,18 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   const [nuevaNota, setNuevaNota] = useState('');
   // Waitlist admin
   const [waitlistEntries, setWaitlistEntries] = useState([]);
+  // Extras admin
+  const [extras, setExtras] = useState([]);
+  const [nuevoExtra, setNuevoExtra] = useState({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false });
+  const [editandoExtra, setEditandoExtra] = useState(null);
 
   useEffect(() => { const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
   useEffect(() => { if (!turnoManual.fecha || !turnoManual.servicio_id) { setHorariosDisponibles([]); return; } api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${turnoManual.servicio_id}`).then(res => setHorariosDisponibles(res.data.horarios || [])).catch(() => setHorariosDisponibles([])); }, [turnoManual.fecha, turnoManual.servicio_id]);
+  useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
+  useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);
 
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
@@ -50,6 +62,7 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   const loadBloques = async () => { try { const res = await api.get('/api/horarios/bloques-cerrados'); setBloques(res.data); } catch (e) {} };
   const loadClientes = async () => { try { const res = await api.get('/api/admin/clientes', headers()); setClientes(res.data); } catch (e) {} };
   const loadWaitlist = async () => { try { const res = await api.get('/api/waitlist/admin', headers()); setWaitlistEntries(res.data); } catch (e) {} };
+  const loadExtras = async () => { try { const res = await api.get('/api/extras', headers()); setExtras(res.data); } catch (e) {} };
 
   const loadFichaCliente = async (telefono) => { setLoadingFicha(true); try { const res = await api.get(`/api/admin/clientes/${telefono}`, headers()); setFichaCliente(res.data); setClienteSeleccionado(telefono); } catch (e) { showErr('Error cargando ficha'); } finally { setLoadingFicha(false); } };
   const handleAgregarNota = async () => { if (!nuevaNota.trim() || !clienteSeleccionado) return; try { await api.post(`/api/admin/clientes/${clienteSeleccionado}/notas`, { texto: nuevaNota }, headers()); setNuevaNota(''); loadFichaCliente(clienteSeleccionado); showMsg('Nota agregada'); } catch (e) { showErr('Error al agregar nota'); } };
@@ -63,6 +76,41 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
     } catch (err) { showErr(err.response?.data?.error || 'Error al cancelar'); }
   };
   const handleEliminarWaitlist = async (id) => { if (!confirm('¿Eliminar de la lista de espera?')) return; try { await api.delete(`/api/waitlist/${id}`, headers()); showMsg('Eliminado de waitlist'); loadWaitlist(); } catch (e) { showErr('Error'); } };
+
+  // Extras
+  const handleCrearExtra = async (e) => {
+    e.preventDefault();
+    if (!nuevoExtra.nombre || nuevoExtra.precio_pesos === '') { showErr('Completá nombre y precio'); return; }
+    try {
+      await api.post('/api/extras', {
+        nombre: nuevoExtra.nombre,
+        descripcion: nuevoExtra.descripcion,
+        precio_pesos: parseFloat(nuevoExtra.precio_pesos),
+        minutos_adicionales: parseInt(nuevoExtra.minutos_adicionales) || 0,
+        servicios_ids: nuevoExtra.servicios_ids,
+        destacado: !!nuevoExtra.destacado,
+      }, headers());
+      setNuevoExtra({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false });
+      showMsg('Extra creado'); loadExtras();
+    } catch (err) { showErr(err.response?.data?.error || 'Error al crear extra'); }
+  };
+  const handleEditarExtra = async (e) => {
+    e.preventDefault();
+    try {
+      await api.patch(`/api/extras/${editandoExtra.id}`, {
+        nombre: editandoExtra.nombre,
+        descripcion: editandoExtra.descripcion,
+        precio_pesos: parseFloat(editandoExtra.precio_pesos),
+        minutos_adicionales: parseInt(editandoExtra.minutos_adicionales) || 0,
+        servicios_ids: Array.isArray(editandoExtra.servicios_ids) ? editandoExtra.servicios_ids.map(n => parseInt(n)) : [],
+        destacado: !!editandoExtra.destacado,
+      }, headers());
+      setEditandoExtra(null); showMsg('Extra actualizado'); loadExtras();
+    } catch (err) { showErr('Error al actualizar'); }
+  };
+  const handleToggleDestacado = async (extra) => { try { await api.patch(`/api/extras/${extra.id}`, { destacado: !extra.destacado }, headers()); loadExtras(); } catch (e) { showErr('Error'); } };
+  const handleDesactivarExtra = async (id) => { if (!confirm('¿Desactivar este extra? Ya no aparecerá para las clientas.')) return; try { await api.delete(`/api/extras/${id}`, headers()); showMsg('Extra desactivado'); loadExtras(); } catch (e) { showErr('Error'); } };
+  const handleActivarExtra = async (id) => { try { await api.patch(`/api/extras/${id}`, { activo: true }, headers()); showMsg('Extra activado'); loadExtras(); } catch (e) { showErr('Error'); } };
 
   const showMsg = (msg) => { setMensaje(msg); setError(''); setTimeout(() => setMensaje(''), 3000); };
   const showErr = (msg) => { setError(msg); setMensaje(''); setTimeout(() => setError(''), 5000); };
@@ -92,8 +140,40 @@ const handleDesactivarServicio = async (id) => {
 
   const handleCrearTurnoManual = async (e) => { e.preventDefault(); try { await api.post('/api/admin/turnos', turnoManual, headers()); setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' }); setMostrarFormTurno(false); showMsg('Turno creado'); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
 
+  const handleAbrirEdicion = (turno) => {
+    const fechaStr = turno.fecha.split('T')[0];
+    setEditandoTurno({
+      id: turno.id,
+      nombre: turno.cliente_nombre,
+      apellido: turno.cliente_apellido,
+      telefono: turno.cliente_telefono,
+      servicio_id: String(turno.servicio_id),
+      fecha: fechaStr,
+      hora_inicio: turno.hora_inicio,
+      _origFecha: fechaStr,
+      _origServicio: String(turno.servicio_id),
+      _origHora: turno.hora_inicio,
+    });
+  };
+  const handleEditarTurno = async (e) => {
+    e.preventDefault();
+    try {
+      await api.patch(`/api/admin/turnos/${editandoTurno.id}`, {
+        nombre: editandoTurno.nombre,
+        apellido: editandoTurno.apellido,
+        telefono: editandoTurno.telefono,
+        servicio_id: editandoTurno.servicio_id,
+        fecha: editandoTurno.fecha,
+        hora_inicio: editandoTurno.hora_inicio,
+      }, headers());
+      setEditandoTurno(null);
+      showMsg('Turno actualizado');
+      loadTurnos();
+    } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
+  };
+
   // Métricas
-  const filtrarPorPeriodo = useCallback((items) => { const ahora = new Date(); return items.filter(t => { const fecha = new Date(t.fecha); if (periodoMetricas === 'semana') { const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7); return fecha >= hace7; } if (periodoMetricas === 'mes') { return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear(); } return true; }); }, [periodoMetricas]);
+  const filtrarPorPeriodo = useCallback((items) => { const ahora = new Date(); return items.filter(t => { const fecha = fechaLocal(t.fecha); if (periodoMetricas === 'semana') { const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7); return fecha >= hace7; } if (periodoMetricas === 'mes') { return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear(); } return true; }); }, [periodoMetricas]);
   const turnosFiltrados = filtrarPorPeriodo(turnos);
   const confirmadosFiltrados = turnosFiltrados.filter(t => t.estado === 'confirmado');
   const canceladosFiltrados = turnosFiltrados.filter(t => t.estado === 'cancelado');
@@ -101,7 +181,7 @@ const handleDesactivarServicio = async (id) => {
   const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => { const s = servicios.find(s => s.id === t.servicio_id); return sum + (s ? parseFloat(s.precio_pesos) : 0); }, 0);
   const servicioCount = {}; confirmadosFiltrados.forEach(t => { const s = servicios.find(s => s.id === t.servicio_id); servicioCount[s ? s.nombre : '?'] = (servicioCount[s ? s.nombre : '?'] || 0) + 1; });
   const topServicios = Object.entries(servicioCount).sort((a, b) => b[1] - a[1]).slice(0, 5); const maxServicio = topServicios[0]?.[1] || 1;
-  const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const turnosPorDia = Array(7).fill(0); confirmadosFiltrados.forEach(t => { turnosPorDia[new Date(t.fecha).getDay()]++; }); const maxDia = Math.max(...turnosPorDia, 1);
+  const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const turnosPorDia = Array(7).fill(0); confirmadosFiltrados.forEach(t => { turnosPorDia[fechaLocal(t.fecha).getDay()]++; }); const maxDia = Math.max(...turnosPorDia, 1);
   const turnosPorHora = {}; confirmadosFiltrados.forEach(t => { const h = t.hora_inicio.split(':')[0]; turnosPorHora[h] = (turnosPorHora[h] || 0) + 1; }); const horasOrdenadas = Object.entries(turnosPorHora).sort((a, b) => b[1] - a[1]).slice(0, 5); const maxHora = horasOrdenadas[0]?.[1] || 1;
   const clienteMapM = {}; confirmadosFiltrados.forEach(t => { const k = t.cliente_telefono; if (!clienteMapM[k]) clienteMapM[k] = { nombre: `${t.cliente_nombre} ${t.cliente_apellido}`, telefono: k, visitas: 0 }; clienteMapM[k].visitas++; }); const topClientesM = Object.values(clienteMapM).sort((a, b) => b.visitas - a.visitas).slice(0, 5);
 
@@ -124,6 +204,19 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
   const turnosHoy = turnos.filter(t => { const hoy = format(new Date(), 'yyyy-MM-dd'); return t.fecha.split('T')[0] === hoy && t.estado === 'confirmado'; });
   const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
 
+  // Opciones de hora para el form de edición: parte de la disponibilidad real,
+  // y si no cambió la fecha ni el servicio, reinyecta la hora original del turno
+  // (que el endpoint excluye por estar ocupada justamente por este turno).
+  const opcionesHoraEdit = (() => {
+    if (!editandoTurno) return [];
+    const lista = [...horariosEditTurno];
+    const mismoContexto = editandoTurno._origFecha === editandoTurno.fecha && editandoTurno._origServicio === editandoTurno.servicio_id;
+    if (mismoContexto && editandoTurno._origHora && !lista.some(h => h.hora_inicio === editandoTurno._origHora)) {
+      lista.unshift({ hora_inicio: editandoTurno._origHora, hora_fin: '' });
+    }
+    return lista;
+  })();
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -140,7 +233,7 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
       </div>
 
       <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6 flex-wrap">
-        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
+        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setClienteSeleccionado(null); setFichaCliente(null); }}
             className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
@@ -150,7 +243,24 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
       {tab === 'turnos' && (<div className="animate-fade-up">
         <div className="mb-6"><button onClick={() => setMostrarFormTurno(!mostrarFormTurno)} className={`btn-primary ${mostrarFormTurno ? 'opacity-70' : ''}`}>{mostrarFormTurno ? '✕ Cancelar' : '➕ Agregar turno manual'}</button></div>
         {mostrarFormTurno && (<div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3><form onSubmit={handleCrearTurnoManual} className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({...turnoManual, nombre: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({...turnoManual, apellido: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({...turnoManual, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div></div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={turnoManual.servicio_id} onChange={e => setTurnoManual({...turnoManual, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div><div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({...turnoManual, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={turnoManual.hora_inicio} onChange={e => setTurnoManual({...turnoManual, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{horariosDisponibles.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio} - {h.hora_fin}</option>)}</select>{turnoManual.fecha && turnoManual.servicio_id && horariosDisponibles.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div></div><button type="submit" disabled={!turnoManual.hora_inicio} className="btn-primary">Crear turno</button></form></div>)}
-        {turnosProximos.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p> : (<div className="space-y-3">{turnosProximos.map(turno => (<div key={turno.id} className="card flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(new Date(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer mt-2">Cancelar turno</button></div></div>))}</div>)}
+        {turnosProximos.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p> : (<div className="space-y-3">{turnosProximos.map(turno => (<div key={turno.id} className="card">{editandoTurno?.id === turno.id ? (
+          <form onSubmit={handleEditarTurno} className="space-y-4">
+            <div className="flex items-center justify-between"><h3 className="font-semibold text-[#8B6F5E]">Editar turno</h3><button type="button" onClick={() => setEditandoTurno(null)} className="text-xs text-[#A89585] hover:text-[#8B6F5E] cursor-pointer">✕ Cerrar</button></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoTurno.nombre} onChange={e => setEditandoTurno({...editandoTurno, nombre: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={editandoTurno.apellido} onChange={e => setEditandoTurno({...editandoTurno, apellido: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={editandoTurno.telefono} onChange={e => setEditandoTurno({...editandoTurno, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => setEditandoTurno({...editandoTurno, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={editandoTurno.fecha} onChange={e => setEditandoTurno({...editandoTurno, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={editandoTurno.hora_inicio} onChange={e => setEditandoTurno({...editandoTurno, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{opcionesHoraEdit.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio}{h.hora_fin ? ` - ${h.hora_fin}` : ''}</option>)}</select>{editandoTurno.fecha && editandoTurno.servicio_id && opcionesHoraEdit.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div>
+            </div>
+            <div className="flex gap-2"><button type="submit" disabled={!editandoTurno.hora_inicio} className="btn-primary">Guardar cambios</button><button type="button" onClick={() => setEditandoTurno(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#8B6F5E] cursor-pointer">Cancelar</button></div>
+          </form>
+        ) : (
+          <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
+        )}</div>))}</div>)}
       </div>)}
 
 {/* SERVICIOS */}
@@ -261,11 +371,102 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
         ))}</div>
       </div>)}
 
+      {/* EXTRAS */}
+      {tab === 'extras' && (<div className="animate-fade-up">
+        <p className="text-sm text-[#A89585] mb-4">Adicionales que la clienta puede sumar a un servicio (suman precio y tiempo). Asigná cada extra a los servicios donde se ofrece.</p>
+        <div className="card mb-6">
+          <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo extra</h3>
+          <form onSubmit={handleCrearExtra} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div className="sm:col-span-2"><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={nuevoExtra.nombre} onChange={e => setNuevoExtra({...nuevoExtra, nombre: e.target.value})} placeholder="Ej: Nail art" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoExtra.precio_pesos} onChange={e => setNuevoExtra({...nuevoExtra, precio_pesos: e.target.value})} placeholder="2000" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">+ Minutos</label><input type="number" value={nuevoExtra.minutos_adicionales} onChange={e => setNuevoExtra({...nuevoExtra, minutos_adicionales: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div>
+            </div>
+            <div><label className="text-xs text-[#A89585] mb-1 block">Descripción (opcional)</label><input type="text" value={nuevoExtra.descripcion} onChange={e => setNuevoExtra({...nuevoExtra, descripcion: e.target.value})} placeholder="Una frase corta y atractiva para la clienta" className="input-field" /></div>
+            <div>
+              <label className="text-xs text-[#A89585] mb-2 block">¿En qué servicios se ofrece?</label>
+              <div className="flex flex-wrap gap-2">
+                {servicios.map(sc => {
+                  const checked = nuevoExtra.servicios_ids.includes(sc.id);
+                  return (
+                    <label key={sc.id} className={`px-3 py-1.5 rounded-full text-xs cursor-pointer border ${checked ? 'bg-[#8B6F5E] text-white border-[#8B6F5E]' : 'bg-white text-[#8B6F5E] border-[#E8DDD3]'}`}>
+                      <input type="checkbox" checked={checked} onChange={e => { const next = e.target.checked ? [...nuevoExtra.servicios_ids, sc.id] : nuevoExtra.servicios_ids.filter(id => id !== sc.id); setNuevoExtra({...nuevoExtra, servicios_ids: next}); }} className="hidden" />
+                      {sc.nombre}
+                    </label>
+                  );
+                })}
+                {servicios.length === 0 && <p className="text-xs text-[#A89585]">Primero creá servicios</p>}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={nuevoExtra.destacado} onChange={e => setNuevoExtra({...nuevoExtra, destacado: e.target.checked})} className="w-4 h-4 accent-[#D4A843]" /><span className="text-sm text-[#8B6F5E]">⭐ Destacar (sello "más pedido")</span></label>
+              <button type="submit" className="btn-primary">Crear extra</button>
+            </div>
+          </form>
+        </div>
+        {extras.length === 0 ? <p className="text-center text-[#A89585] py-8">Todavía no hay extras</p> : (<div className="space-y-3">{extras.map(ex => (
+          <div key={ex.id} className={`card ${!ex.activo ? 'opacity-60' : ''}`}>{editandoExtra?.id === ex.id ? (
+            <form onSubmit={handleEditarExtra} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="sm:col-span-2"><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoExtra.nombre} onChange={e => setEditandoExtra({...editandoExtra, nombre: e.target.value})} className="input-field" /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={editandoExtra.precio_pesos} onChange={e => setEditandoExtra({...editandoExtra, precio_pesos: e.target.value})} className="input-field" /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">+ Minutos</label><input type="number" value={editandoExtra.minutos_adicionales} onChange={e => setEditandoExtra({...editandoExtra, minutos_adicionales: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div>
+              </div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Descripción</label><input type="text" value={editandoExtra.descripcion || ''} onChange={e => setEditandoExtra({...editandoExtra, descripcion: e.target.value})} className="input-field" /></div>
+              <div>
+                <label className="text-xs text-[#A89585] mb-2 block">¿En qué servicios se ofrece?</label>
+                <div className="flex flex-wrap gap-2">
+                  {servicios.map(sc => {
+                    const actuales = Array.isArray(editandoExtra.servicios_ids) ? editandoExtra.servicios_ids : [];
+                    const checked = actuales.includes(sc.id);
+                    return (
+                      <label key={sc.id} className={`px-3 py-1.5 rounded-full text-xs cursor-pointer border ${checked ? 'bg-[#8B6F5E] text-white border-[#8B6F5E]' : 'bg-white text-[#8B6F5E] border-[#E8DDD3]'}`}>
+                        <input type="checkbox" checked={checked} onChange={e => { const next = e.target.checked ? [...actuales, sc.id] : actuales.filter(id => id !== sc.id); setEditandoExtra({...editandoExtra, servicios_ids: next}); }} className="hidden" />
+                        {sc.nombre}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={!!editandoExtra.destacado} onChange={e => setEditandoExtra({...editandoExtra, destacado: e.target.checked})} className="w-4 h-4 accent-[#D4A843]" /><span className="text-sm text-[#8B6F5E]">⭐ Destacar</span></label>
+                <div className="flex gap-2"><button type="submit" className="btn-primary">Guardar</button><button type="button" onClick={() => setEditandoExtra(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div>
+              </div>
+            </form>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">{ex.destacado && '⭐ '}{ex.nombre}{!ex.activo && <span className="text-xs text-[#A89585] ml-2">(inactivo)</span>}</p>
+                {ex.descripcion && <p className="text-sm text-[#A89585]">{ex.descripcion}</p>}
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">+${ex.precio_pesos}</span>
+                  {ex.minutos_adicionales > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">+{ex.minutos_adicionales} min</span>}
+                  {Array.isArray(ex.servicios_ids) && ex.servicios_ids.length > 0 ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">En: {ex.servicios_ids.map(id => servicios.find(s => s.id === id)?.nombre).filter(Boolean).join(', ') || '—'}</span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-[#C47070]">Sin servicios asignados</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => handleToggleDestacado(ex)} title="Destacar" className="text-sm cursor-pointer">{ex.destacado ? '⭐' : '☆'}</button>
+                <button onClick={() => setEditandoExtra({...ex, descripcion: ex.descripcion || '', servicios_ids: Array.isArray(ex.servicios_ids) ? [...ex.servicios_ids] : [], destacado: !!ex.destacado})} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button>
+                {ex.activo ? (
+                  <button onClick={() => handleDesactivarExtra(ex.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Desactivar</button>
+                ) : (
+                  <button onClick={() => handleActivarExtra(ex.id)} className="text-sm text-[#6B8F6B] hover:underline cursor-pointer">Activar</button>
+                )}
+              </div>
+            </div>
+          )}</div>
+        ))}</div>)}
+      </div>)}
+
       {/* HORARIOS */}
       {tab === 'horarios' && (<div className="animate-fade-up"><p className="text-sm text-[#A89585] mb-4">Configurá múltiples rangos horarios por día.</p><div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Agregar rango horario</h3><form onSubmit={handleCrearRango} className="grid grid-cols-2 sm:grid-cols-5 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Día</label><select value={nuevoRango.dia_semana} onChange={e => setNuevoRango({...nuevoRango, dia_semana: parseInt(e.target.value)})} className="input-field">{DIAS.map((d,i) => <option key={i} value={i}>{d}</option>)}</select></div><div><label className="text-xs text-[#A89585] mb-1 block">Desde</label><input type="time" value={nuevoRango.hora_inicio} onChange={e => setNuevoRango({...nuevoRango, hora_inicio: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Hasta</label><input type="time" value={nuevoRango.hora_fin} onChange={e => setNuevoRango({...nuevoRango, hora_fin: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Espacio (min)</label><input type="number" value={nuevoRango.espacio_entre_turnos_min} onChange={e => setNuevoRango({...nuevoRango, espacio_entre_turnos_min: parseInt(e.target.value)||0})} min="0" step="5" className="input-field" /></div><div className="flex items-end"><button type="submit" className="btn-primary w-full">Agregar</button></div></form></div><div className="space-y-4">{DIAS.map((dia, idx) => { const rangos = horariosPorDia2[idx] || []; return (<div key={idx} className="card"><div className="flex items-center justify-between mb-3"><h4 className="font-semibold text-[#2D2A26]">{dia}</h4>{rangos.length === 0 && <span className="text-sm text-[#C47070]">Cerrado</span>}</div>{rangos.length > 0 && (<div className="space-y-2">{rangos.map(r => (<div key={r.id} className="flex items-center gap-3 bg-[#F5F0EB] rounded-lg p-3"><input type="time" value={r.hora_inicio} onChange={e => handleEditarRango(r.id,'hora_inicio',e.target.value)} className="input-field w-28" /><span className="text-[#A89585]">a</span><input type="time" value={r.hora_fin} onChange={e => handleEditarRango(r.id,'hora_fin',e.target.value)} className="input-field w-28" /><span className="text-xs text-[#A89585] hidden sm:inline">espacio:</span><input type="number" value={r.espacio_entre_turnos_min} onChange={e => handleEditarRango(r.id,'espacio_entre_turnos_min',parseInt(e.target.value)||0)} className="input-field w-16" min="0" /><span className="text-xs text-[#A89585] hidden sm:inline">min</span><button onClick={() => handleEliminarRango(r.id)} className="text-[#C47070] hover:text-red-700 text-sm cursor-pointer ml-auto">✕</button></div>))}</div>)}</div>); })}</div></div>)}
 
       {/* BLOQUEOS */}
-      {tab === 'bloques' && (<div className="animate-fade-up"><p className="text-sm text-[#A89585] mb-4">Bloqueá días específicos (feriados, vacaciones, etc.)</p><div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo bloqueo</h3><form onSubmit={handleCrearBloque} className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({...nuevoBloque, fecha: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Motivo</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({...nuevoBloque, motivo: e.target.value})} placeholder="Ej: Feriado" className="input-field" /></div><div className="flex items-end"><button type="submit" className="btn-primary w-full">Bloquear</button></div></form></div>{bloques.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay días bloqueados</p> : (<div className="space-y-3">{bloques.map(b => (<div key={b.id} className="card flex items-center justify-between"><div><p className="font-semibold">{format(new Date(b.fecha), "EEEE d 'de' MMMM yyyy", {locale: es})}</p>{b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}</div><button onClick={() => handleEliminarBloque(b.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button></div>))}</div>)}</div>)}
+      {tab === 'bloques' && (<div className="animate-fade-up"><p className="text-sm text-[#A89585] mb-4">Bloqueá días específicos (feriados, vacaciones, etc.)</p><div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Nuevo bloqueo</h3><form onSubmit={handleCrearBloque} className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({...nuevoBloque, fecha: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Motivo</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({...nuevoBloque, motivo: e.target.value})} placeholder="Ej: Feriado" className="input-field" /></div><div className="flex items-end"><button type="submit" className="btn-primary w-full">Bloquear</button></div></form></div>{bloques.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay días bloqueados</p> : (<div className="space-y-3">{bloques.map(b => (<div key={b.id} className="card flex items-center justify-between"><div><p className="font-semibold">{format(fechaLocal(b.fecha), "EEEE d 'de' MMMM yyyy", {locale: es})}</p>{b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}</div><button onClick={() => handleEliminarBloque(b.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button></div>))}</div>)}</div>)}
 
       {/* MÉTRICAS */}
       {tab === 'metricas' && (<div className="animate-fade-up"><div className="flex items-center justify-between mb-6"><p className="text-sm text-[#A89585]">Estadísticas del negocio</p><div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1">{[{key:'semana',label:'7 días'},{key:'mes',label:'Este mes'},{key:'todo',label:'Todo'}].map(p => (<button key={p.key} onClick={() => setPeriodoMetricas(p.key)} className={`py-1.5 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${periodoMetricas === p.key ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{p.label}</button>))}</div></div>
@@ -278,9 +479,9 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
       {tab === 'clientes' && (<div className="animate-fade-up">
         {clienteSeleccionado && fichaCliente ? (<div>
           <button onClick={() => {setClienteSeleccionado(null);setFichaCliente(null);}} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer mb-4 inline-block">← Volver</button>
-          <div className="card mb-4"><div className="flex items-center justify-between"><div><h3 className="text-xl font-semibold text-[#2D2A26]">{fichaCliente.turnos[0]?.cliente_nombre} {fichaCliente.turnos[0]?.cliente_apellido}</h3><p className="text-sm text-[#A89585]">📱 {clienteSeleccionado}</p></div><div className="text-right"><p className="text-2xl font-bold text-[#8B6F5E]">{fichaCliente.turnos.filter(t=>t.estado==='confirmado').length}</p><p className="text-xs text-[#A89585]">visitas</p></div></div><div className="grid grid-cols-3 gap-3 mt-4"><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#6B8F6B]">${fichaCliente.turnos.filter(t=>t.estado==='confirmado').reduce((s,t) => s+(t.servicio?parseFloat(t.servicio.precio_pesos):0),0).toLocaleString('es-AR')}</p><p className="text-xs text-[#A89585]">Gasto total</p></div><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#8B6F5E]">{format(new Date(fichaCliente.turnos[fichaCliente.turnos.length-1]?.fecha),"d/M/yy")}</p><p className="text-xs text-[#A89585]">Primera</p></div><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#8B6F5E]">{format(new Date(fichaCliente.turnos[0]?.fecha),"d/M/yy")}</p><p className="text-xs text-[#A89585]">Última</p></div></div></div>
+          <div className="card mb-4"><div className="flex items-center justify-between"><div><h3 className="text-xl font-semibold text-[#2D2A26]">{fichaCliente.turnos[0]?.cliente_nombre} {fichaCliente.turnos[0]?.cliente_apellido}</h3><p className="text-sm text-[#A89585]">📱 {clienteSeleccionado}</p></div><div className="text-right"><p className="text-2xl font-bold text-[#8B6F5E]">{fichaCliente.turnos.filter(t=>t.estado==='confirmado').length}</p><p className="text-xs text-[#A89585]">visitas</p></div></div><div className="grid grid-cols-3 gap-3 mt-4"><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#6B8F6B]">${fichaCliente.turnos.filter(t=>t.estado==='confirmado').reduce((s,t) => s+(t.servicio?parseFloat(t.servicio.precio_pesos):0),0).toLocaleString('es-AR')}</p><p className="text-xs text-[#A89585]">Gasto total</p></div><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#8B6F5E]">{format(fechaLocal(fichaCliente.turnos[fichaCliente.turnos.length-1]?.fecha),"d/M/yy")}</p><p className="text-xs text-[#A89585]">Primera</p></div><div className="bg-[#F5F0EB] rounded-lg p-3 text-center"><p className="text-sm font-bold text-[#8B6F5E]">{format(fechaLocal(fichaCliente.turnos[0]?.fecha),"d/M/yy")}</p><p className="text-xs text-[#A89585]">Última</p></div></div></div>
           <div className="card mb-4"><h4 className="font-semibold text-[#8B6F5E] mb-3">📝 Notas</h4><div className="flex gap-2 mb-3"><input type="text" value={nuevaNota} onChange={e => setNuevaNota(e.target.value)} onKeyDown={e => e.key==='Enter'&&handleAgregarNota()} placeholder="Ej: Prefiere semipermanente..." className="input-field flex-1" /><button onClick={handleAgregarNota} disabled={!nuevaNota.trim()} className="btn-primary">Agregar</button></div>{fichaCliente.notas.length===0?<p className="text-sm text-[#A89585]">Sin notas</p>:<div className="space-y-2">{fichaCliente.notas.map(nota => (<div key={nota.id} className="flex items-start justify-between bg-[#FFFBF0] border border-[#F5EDD6] rounded-lg p-3"><div><p className="text-sm">{nota.texto}</p><p className="text-xs text-[#A89585] mt-1">{format(new Date(nota.created_at),"d MMM yyyy, HH:mm",{locale:es})}</p></div><button onClick={() => handleEliminarNota(nota.id)} className="text-xs text-[#C47070] hover:underline cursor-pointer ml-2">✕</button></div>))}</div>}</div>
-          <div className="card"><h4 className="font-semibold text-[#8B6F5E] mb-3">📋 Historial</h4><div className="space-y-2">{fichaCliente.turnos.map(t => (<div key={t.id} className="flex items-center justify-between py-2 border-b border-[#F5F0EB] last:border-0"><div><p className="text-sm font-medium">{format(new Date(t.fecha),"EEE d MMM yyyy",{locale:es})} · {t.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{t.servicio?.nombre}</p></div><span className={`text-xs px-2 py-0.5 rounded-full ${t.estado==='confirmado'?'bg-[#E8F5E8] text-[#6B8F6B]':'bg-red-50 text-[#C47070]'}`}>{t.estado}</span></div>))}</div></div>
+          <div className="card"><h4 className="font-semibold text-[#8B6F5E] mb-3">📋 Historial</h4><div className="space-y-2">{fichaCliente.turnos.map(t => (<div key={t.id} className="flex items-center justify-between py-2 border-b border-[#F5F0EB] last:border-0"><div><p className="text-sm font-medium">{format(fechaLocal(t.fecha),"EEE d MMM yyyy",{locale:es})} · {t.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{t.servicio?.nombre}</p></div><span className={`text-xs px-2 py-0.5 rounded-full ${t.estado==='confirmado'?'bg-[#E8F5E8] text-[#6B8F6B]':'bg-red-50 text-[#C47070]'}`}>{t.estado}</span></div>))}</div></div>
         </div>) : (<div>
           <div className="flex flex-col sm:flex-row gap-3 mb-6"><input type="text" value={busquedaCliente} onChange={e => setBusquedaCliente(e.target.value)} placeholder="🔍 Buscar por nombre o teléfono..." className="input-field flex-1" /><select value={ordenClientes} onChange={e => setOrdenClientes(e.target.value)} className="input-field w-auto"><option value="frecuencia">Más frecuentes</option><option value="reciente">Más recientes</option><option value="gasto">Mayor gasto</option></select></div>
           {clientesFiltrados.length===0?<p className="text-center text-[#A89585] py-8">{busquedaCliente?'No se encontraron':'Sin clientes'}</p>:(<div className="space-y-3">{clientesFiltrados.map(c => (<div key={c.telefono} className="card cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadFichaCliente(c.telefono)}><div className="flex items-center justify-between"><div><p className="font-semibold">{c.nombre} {c.apellido}</p><p className="text-xs text-[#A89585]">📱 {c.telefono}</p><div className="flex gap-2 mt-1"><span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">💅 {c.servicioFavorito}</span>{parseFloat(c.tasaCancelacion)>30&&<span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-[#C47070]">⚠️ {c.tasaCancelacion}%</span>}</div></div><div className="text-right"><p className="text-lg font-bold text-[#8B6F5E]">{c.totalConfirmados}</p><p className="text-xs text-[#A89585]">visitas</p><p className="text-xs text-[#6B8F6B] font-semibold">${c.gastoTotal.toLocaleString('es-AR')}</p></div></div></div>))}</div>)}
