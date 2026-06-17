@@ -29,6 +29,8 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
   const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' });
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  const [editandoTurno, setEditandoTurno] = useState(null);
+  const [horariosEditTurno, setHorariosEditTurno] = useState([]);
   const [periodoMetricas, setPeriodoMetricas] = useState('mes');
   const [clientes, setClientes] = useState([]);
   const [busquedaCliente, setBusquedaCliente] = useState('');
@@ -43,6 +45,7 @@ const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minuto
   useEffect(() => { const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
   useEffect(() => { if (!turnoManual.fecha || !turnoManual.servicio_id) { setHorariosDisponibles([]); return; } api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${turnoManual.servicio_id}`).then(res => setHorariosDisponibles(res.data.horarios || [])).catch(() => setHorariosDisponibles([])); }, [turnoManual.fecha, turnoManual.servicio_id]);
+  useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
 
@@ -96,6 +99,38 @@ const handleDesactivarServicio = async (id) => {
 
   const handleCrearTurnoManual = async (e) => { e.preventDefault(); try { await api.post('/api/admin/turnos', turnoManual, headers()); setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '' }); setMostrarFormTurno(false); showMsg('Turno creado'); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
 
+  const handleAbrirEdicion = (turno) => {
+    const fechaStr = turno.fecha.split('T')[0];
+    setEditandoTurno({
+      id: turno.id,
+      nombre: turno.cliente_nombre,
+      apellido: turno.cliente_apellido,
+      telefono: turno.cliente_telefono,
+      servicio_id: String(turno.servicio_id),
+      fecha: fechaStr,
+      hora_inicio: turno.hora_inicio,
+      _origFecha: fechaStr,
+      _origServicio: String(turno.servicio_id),
+      _origHora: turno.hora_inicio,
+    });
+  };
+  const handleEditarTurno = async (e) => {
+    e.preventDefault();
+    try {
+      await api.patch(`/api/admin/turnos/${editandoTurno.id}`, {
+        nombre: editandoTurno.nombre,
+        apellido: editandoTurno.apellido,
+        telefono: editandoTurno.telefono,
+        servicio_id: editandoTurno.servicio_id,
+        fecha: editandoTurno.fecha,
+        hora_inicio: editandoTurno.hora_inicio,
+      }, headers());
+      setEditandoTurno(null);
+      showMsg('Turno actualizado');
+      loadTurnos();
+    } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
+  };
+
   // Métricas
   const filtrarPorPeriodo = useCallback((items) => { const ahora = new Date(); return items.filter(t => { const fecha = fechaLocal(t.fecha); if (periodoMetricas === 'semana') { const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7); return fecha >= hace7; } if (periodoMetricas === 'mes') { return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear(); } return true; }); }, [periodoMetricas]);
   const turnosFiltrados = filtrarPorPeriodo(turnos);
@@ -128,6 +163,19 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
   const turnosHoy = turnos.filter(t => { const hoy = format(new Date(), 'yyyy-MM-dd'); return t.fecha.split('T')[0] === hoy && t.estado === 'confirmado'; });
   const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
 
+  // Opciones de hora para el form de edición: parte de la disponibilidad real,
+  // y si no cambió la fecha ni el servicio, reinyecta la hora original del turno
+  // (que el endpoint excluye por estar ocupada justamente por este turno).
+  const opcionesHoraEdit = (() => {
+    if (!editandoTurno) return [];
+    const lista = [...horariosEditTurno];
+    const mismoContexto = editandoTurno._origFecha === editandoTurno.fecha && editandoTurno._origServicio === editandoTurno.servicio_id;
+    if (mismoContexto && editandoTurno._origHora && !lista.some(h => h.hora_inicio === editandoTurno._origHora)) {
+      lista.unshift({ hora_inicio: editandoTurno._origHora, hora_fin: '' });
+    }
+    return lista;
+  })();
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -154,7 +202,24 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
       {tab === 'turnos' && (<div className="animate-fade-up">
         <div className="mb-6"><button onClick={() => setMostrarFormTurno(!mostrarFormTurno)} className={`btn-primary ${mostrarFormTurno ? 'opacity-70' : ''}`}>{mostrarFormTurno ? '✕ Cancelar' : '➕ Agregar turno manual'}</button></div>
         {mostrarFormTurno && (<div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3><form onSubmit={handleCrearTurnoManual} className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({...turnoManual, nombre: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({...turnoManual, apellido: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({...turnoManual, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div></div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={turnoManual.servicio_id} onChange={e => setTurnoManual({...turnoManual, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div><div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({...turnoManual, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={turnoManual.hora_inicio} onChange={e => setTurnoManual({...turnoManual, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{horariosDisponibles.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio} - {h.hora_fin}</option>)}</select>{turnoManual.fecha && turnoManual.servicio_id && horariosDisponibles.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div></div><button type="submit" disabled={!turnoManual.hora_inicio} className="btn-primary">Crear turno</button></form></div>)}
-        {turnosProximos.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p> : (<div className="space-y-3">{turnosProximos.map(turno => (<div key={turno.id} className="card flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer mt-2">Cancelar turno</button></div></div>))}</div>)}
+        {turnosProximos.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay turnos próximos</p> : (<div className="space-y-3">{turnosProximos.map(turno => (<div key={turno.id} className="card">{editandoTurno?.id === turno.id ? (
+          <form onSubmit={handleEditarTurno} className="space-y-4">
+            <div className="flex items-center justify-between"><h3 className="font-semibold text-[#8B6F5E]">Editar turno</h3><button type="button" onClick={() => setEditandoTurno(null)} className="text-xs text-[#A89585] hover:text-[#8B6F5E] cursor-pointer">✕ Cerrar</button></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoTurno.nombre} onChange={e => setEditandoTurno({...editandoTurno, nombre: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={editandoTurno.apellido} onChange={e => setEditandoTurno({...editandoTurno, apellido: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={editandoTurno.telefono} onChange={e => setEditandoTurno({...editandoTurno, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => setEditandoTurno({...editandoTurno, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={editandoTurno.fecha} onChange={e => setEditandoTurno({...editandoTurno, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={editandoTurno.hora_inicio} onChange={e => setEditandoTurno({...editandoTurno, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{opcionesHoraEdit.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio}{h.hora_fin ? ` - ${h.hora_fin}` : ''}</option>)}</select>{editandoTurno.fecha && editandoTurno.servicio_id && opcionesHoraEdit.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div>
+            </div>
+            <div className="flex gap-2"><button type="submit" disabled={!editandoTurno.hora_inicio} className="btn-primary">Guardar cambios</button><button type="button" onClick={() => setEditandoTurno(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#8B6F5E] cursor-pointer">Cancelar</button></div>
+          </form>
+        ) : (
+          <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
+        )}</div>))}</div>)}
       </div>)}
 
 {/* SERVICIOS */}
