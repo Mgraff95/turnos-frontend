@@ -13,6 +13,7 @@ export default function ReservarPage() {
   const [fechaSeleccionada, setFechaSeleccionada] = useState('');
   const [horaSeleccionada, setHoraSeleccionada] = useState('');
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  const [paginaFecha, setPaginaFecha] = useState(0);
   const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
@@ -72,6 +73,12 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
   const proxDias = Array.from({ length: 60 }, (_, i) => addDays(hoy, i + 1))
     .filter(dia => diasHabilitados.includes(diaJsToDB(dia.getDay())));
 
+  // Paginación de fechas (5 por página, con flechas)
+  const diasPorPagina = 5;
+  const totalPaginas = Math.max(1, Math.ceil(proxDias.length / diasPorPagina));
+  const paginaSegura = Math.min(paginaFecha, totalPaginas - 1);
+  const diasPagina = proxDias.slice(paginaSegura * diasPorPagina, paginaSegura * diasPorPagina + diasPorPagina);
+
   // Detectar si faltan franjas
   const tieneMañana = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) < 14);
   const tieneTarde = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) >= 14);
@@ -106,6 +113,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
     setExtrasServicio([]);
     setFechaSeleccionada('');
     setHoraSeleccionada('');
+    setPaginaFecha(0);
     try {
       const res = await api.get(`/api/extras/servicio/${s.id}`);
       const lista = res.data || [];
@@ -409,27 +417,43 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
             </div>
           )}
 
-          <p className="font-medium mb-3">Elegí una fecha</p>
-          <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 mb-6">
-            {proxDias.map(dia => {
-              const fechaStr = format(dia, 'yyyy-MM-dd');
-              const isSelected = fechaSeleccionada === fechaStr;
-              return (
-                <button key={fechaStr} onClick={() => setFechaSeleccionada(fechaStr)}
-                  className={`p-2 rounded-lg text-center text-sm transition-colors cursor-pointer ${
-                    isSelected ? 'bg-[#8B6F5E] text-white' : 'bg-white border border-[#E8DDD3] hover:border-[#8B6F5E] text-[#2D2A26]'
-                  }`}>
-                  <p className="text-xs opacity-70">{format(dia, 'EEE', { locale: es })}</p>
-                  <p className="font-bold">{format(dia, 'd')}</p>
-                  <p className="text-xs opacity-70">{format(dia, 'MMM', { locale: es })}</p>
-                </button>
-              );
-            })}
-          </div>
+          {!fechaSeleccionada ? (
+            <div className="animate-fade-up">
+              <p className="font-medium mb-3">Elegí una fecha</p>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPaginaFecha(p => Math.max(0, p - 1))} disabled={paginaSegura === 0}
+                  className="shrink-0 w-9 h-10 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#8B6F5E] cursor-pointer">‹</button>
+                <div className="grid grid-cols-5 gap-2 flex-1">
+                  {diasPagina.map(dia => {
+                    const fechaStr = format(dia, 'yyyy-MM-dd');
+                    return (
+                      <button key={fechaStr} onClick={() => setFechaSeleccionada(fechaStr)}
+                        className="p-2 rounded-lg text-center text-sm transition-colors cursor-pointer bg-white border border-[#E8DDD3] hover:border-[#8B6F5E] hover:bg-[#FFFBF5] text-[#2D2A26]">
+                        <p className="text-xs opacity-70">{format(dia, 'EEE', { locale: es })}</p>
+                        <p className="font-bold text-base">{format(dia, 'd')}</p>
+                        <p className="text-xs opacity-70">{format(dia, 'MMM', { locale: es })}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={() => setPaginaFecha(p => Math.min(totalPaginas - 1, p + 1))} disabled={paginaSegura >= totalPaginas - 1}
+                  className="shrink-0 w-9 h-10 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#8B6F5E] cursor-pointer">›</button>
+              </div>
+              {totalPaginas > 1 && (
+                <p className="text-center text-xs text-[#A89585] mt-3">Usá las flechas para ver más fechas · {paginaSegura + 1}/{totalPaginas}</p>
+              )}
+            </div>
+          ) : (
+            <div className="animate-fade-up">
+              <div className="card mb-4 flex items-center justify-between bg-[#F5F0EB]">
+                <div>
+                  <p className="text-xs text-[#A89585]">Fecha elegida</p>
+                  <p className="font-semibold text-[#8B6F5E]">📅 {format(new Date(fechaSeleccionada + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}</p>
+                </div>
+                <button onClick={() => { setFechaSeleccionada(''); setHoraSeleccionada(''); }} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer whitespace-nowrap ml-3">Cambiar fecha</button>
+              </div>
 
-          {fechaSeleccionada && (
-            <>
-              <p className="font-medium mb-3">Horarios disponibles</p>
+              <p className="font-medium mb-3">Elegí un horario</p>
               {loading ? (
                 <p className="text-[#A89585] text-sm">Cargando horarios...</p>
               ) : sinHorarios ? (
@@ -456,7 +480,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
                   <WaitlistSection prominente={false} />
                 </div>
               )}
-            </>
+            </div>
           )}
 
           {horaSeleccionada && (
