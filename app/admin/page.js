@@ -217,6 +217,13 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
     return lista;
   })();
 
+  // Total de un turno (servicio + extras)
+  const totalTurno = (turno) => {
+    const base = parseFloat(turno.servicio?.precio_pesos || 0);
+    const ex = (turno.extras || []).reduce((s, e) => s + parseFloat(e.precio_pesos || 0), 0);
+    return base + ex;
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -259,7 +266,7 @@ const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.e
             <div className="flex gap-2"><button type="submit" disabled={!editandoTurno.hora_inicio} className="btn-primary">Guardar cambios</button><button type="button" onClick={() => setEditandoTurno(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#8B6F5E] cursor-pointer">Cancelar</button></div>
           </form>
         ) : (
-          <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p></div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
+          <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p>{turno.extras && turno.extras.length > 0 && (<p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {turno.extras.map(e => e.nombre).join(', ')} · Total ${totalTurno(turno).toLocaleString('es-AR')}</p>)}</div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
         )}</div>))}</div>)}
       </div>)}
 
