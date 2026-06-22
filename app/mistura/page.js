@@ -58,6 +58,10 @@ export default function MisTurnosPage() {
     return resultado;
   };
 
+  // Parsea la fecha de la DB ("YYYY-MM-DD..." en UTC) anclándola al mediodía local,
+  // para que Argentina (UTC-3) no retroceda un día al formatear.
+  const parseFecha = (fecha) => new Date(fecha.split('T')[0] + 'T12:00:00');
+
   const puedeCancelarTurno = (turno) => {
     const ahora = new Date();
     const turnoDateTime = new Date(`${turno.fecha.split('T')[0]}T${turno.hora_inicio}`);
@@ -65,7 +69,7 @@ export default function MisTurnosPage() {
   };
 
   const handleCancelar = async (turno) => {
-    if (!confirm(`¿Segura que querés cancelar tu turno del ${format(new Date(turno.fecha), "d/MM", { locale: es })} a las ${turno.hora_inicio}?`)) return;
+    if (!confirm(`¿Segura que querés cancelar tu turno del ${format(parseFecha(turno.fecha), "d/MM", { locale: es })} a las ${turno.hora_inicio}?`)) return;
 
     setError('');
     try {
@@ -84,7 +88,7 @@ export default function MisTurnosPage() {
   const handleCancelarGrupo = async (grupo) => {
     const primero = grupo.turnos[0];
     const nombres = grupo.turnos.map(t => t.servicio?.nombre).join(' + ');
-    if (!confirm(`¿Segura que querés cancelar tu reserva del ${format(new Date(primero.fecha), "d/MM", { locale: es })} (${nombres})? Se cancelan todos los servicios del bloque.`)) return;
+    if (!confirm(`¿Segura que querés cancelar tu reserva del ${format(parseFecha(primero.fecha), "d/MM", { locale: es })} (${nombres})? Se cancelan todos los servicios del bloque.`)) return;
 
     setError('');
     try {
@@ -178,7 +182,7 @@ export default function MisTurnosPage() {
                         💆‍♀️ Reserva de {item.turnos.length} servicios
                       </span>
                       <p className="text-[#8B6F5E] font-medium">
-                        {format(new Date(primero.fecha), "EEEE d 'de' MMMM", { locale: es })}
+                        {format(parseFecha(primero.fecha), "EEEE d 'de' MMMM", { locale: es })}
                       </p>
                       <p className="text-[#A89585] text-sm">
                         {primero.hora_inicio} - {ultimo.hora_fin} hs
@@ -214,7 +218,7 @@ export default function MisTurnosPage() {
 
             // ── Turno simple (1 servicio) ──
             const turno = item.turno;
-            const fechaTurno = new Date(turno.fecha);
+            const fechaTurno = parseFecha(turno.fecha);
             const puedeCancelar = puedeCancelarTurno(turno);
 
             return (
