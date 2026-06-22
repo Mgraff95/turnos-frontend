@@ -7,9 +7,12 @@ import { es } from 'date-fns/locale';
 export default function ReservarPage() {
   const [step, setStep] = useState(1);
   const [servicios, setServicios] = useState([]);
-  const [servicioSeleccionado, setServicioSeleccionado] = useState(null);
-  const [extrasServicio, setExtrasServicio] = useState([]);
-  const [extrasSeleccionados, setExtrasSeleccionados] = useState([]);
+  // Reserva múltiple: array de servicios elegidos (1 o más)
+  const [serviciosSeleccionados, setServiciosSeleccionados] = useState([]);
+  // Extras disponibles por servicio: { [servicioId]: [extra,...] }
+  const [extrasPorServicio, setExtrasPorServicio] = useState({});
+  // Extras elegidos por servicio: { [servicioId]: [extra,...] }
+  const [extrasElegidos, setExtrasElegidos] = useState({});
   const [fechaSeleccionada, setFechaSeleccionada] = useState('');
   const [horaSeleccionada, setHoraSeleccionada] = useState('');
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
@@ -20,6 +23,7 @@ export default function ReservarPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [turnoConfirmado, setTurnoConfirmado] = useState(null);
+  const [reservaMultiple, setReservaMultiple] = useState(null);
   const [horariosLoaded, setHorariosLoaded] = useState(false);
 
   // Waitlist
@@ -38,23 +42,47 @@ export default function ReservarPage() {
       .catch(() => setError('No se pudieron cargar los servicios'));
   }, []);
 
+  const esMulti = serviciosSeleccionados.length >= 2;
+
+  // Payload de servicios+extras para los endpoints multi
+  const buildServiciosPayload = () =>
+    serviciosSeleccionados.map(s => ({
+      servicio_id: s.id,
+      extras: (extrasElegidos[s.id] || []).map(e => e.id),
+    }));
+
+  // Disponibilidad: 1 servicio usa el endpoint clásico; 2+ usa el de bloque
   useEffect(() => {
-    if (!fechaSeleccionada || !servicioSeleccionado) return;
+    if (!fechaSeleccionada || serviciosSeleccionados.length === 0) return;
     setHoraSeleccionada('');
     setLoading(true);
     setHorariosLoaded(false);
     setMostrarWaitlist(false);
     setWaitlistEnviado(false);
-    const extrasParam = extrasSeleccionados.length > 0
-      ? `?extras=${extrasSeleccionados.map(e => e.id).join(',')}`
-      : '';
-    api.get(`/api/turnos/disponibilidad/${fechaSeleccionada}/${servicioSeleccionado.id}${extrasParam}`)
-      .then(res => setHorariosDisponibles(res.data.horarios || []))
-      .catch(() => setHorariosDisponibles([]))
-      .finally(() => { setLoading(false); setHorariosLoaded(true); });
-  }, [fechaSeleccionada, servicioSeleccionado, extrasSeleccionados]);
 
-const [diasHabilitados, setDiasHabilitados] = useState([]);
+    const finalizar = () => { setLoading(false); setHorariosLoaded(true); };
+
+    if (serviciosSeleccionados.length === 1) {
+      const s = serviciosSeleccionados[0];
+      const exIds = (extrasElegidos[s.id] || []).map(e => e.id);
+      const extrasParam = exIds.length > 0 ? `?extras=${exIds.join(',')}` : '';
+      api.get(`/api/turnos/disponibilidad/${fechaSeleccionada}/${s.id}${extrasParam}`)
+        .then(res => setHorariosDisponibles(res.data.horarios || []))
+        .catch(() => setHorariosDisponibles([]))
+        .finally(finalizar);
+    } else {
+      api.post('/api/turnos/disponibilidad-multi', {
+        fecha: fechaSeleccionada,
+        servicios: buildServiciosPayload(),
+      })
+        .then(res => setHorariosDisponibles(res.data.horarios || []))
+        .catch(() => setHorariosDisponibles([]))
+        .finally(finalizar);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechaSeleccionada, serviciosSeleccionados, extrasElegidos]);
+
+  const [diasHabilitados, setDiasHabilitados] = useState([]);
 
   useEffect(() => {
     api.get('/api/horarios')
@@ -85,14 +113,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
   const sinHorarios = horariosLoaded && horariosDisponibles.length === 0;
   const faltaFranja = horariosLoaded && horariosDisponibles.length > 0 && (!tieneMañana || !tieneTarde);
 
-  // ── Extras: helpers y totales ───────────────
-  const toggleExtra = (ex) => {
-    setExtrasSeleccionados(prev =>
-      prev.some(e => e.id === ex.id)
-        ? prev.filter(e => e.id !== ex.id)
-        : [...prev, ex]
-    );
-  };
+  // ── Helpers de formato / totales ───────────────
   const formatDuracion = (min) => {
     const h = Math.floor(min / 60);
     const m = min % 60;
@@ -100,51 +121,122 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
     if (h) return `${h}h`;
     return `${m} min`;
   };
-  const precioServicio = servicioSeleccionado ? parseFloat(servicioSeleccionado.precio_pesos) : 0;
-  const precioExtras = extrasSeleccionados.reduce((s, e) => s + parseFloat(e.precio_pesos), 0);
-  const totalPrecio = precioServicio + precioExtras;
-  const minutosTotal = (servicioSeleccionado?.duracion_minutos || 0) + extrasSeleccionados.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
-  const duracionTotalTexto = formatDuracion(minutosTotal);
 
-  // ── Elegir servicio → cargar extras y decidir paso ──
-  const handleElegirServicio = async (s) => {
-    setServicioSeleccionado(s);
-    setExtrasSeleccionados([]);
-    setExtrasServicio([]);
+  const sumarMinutos = (hhmm, mins) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    const total = h * 60 + m + mins;
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  };
+
+  // Total de precio y duración sobre TODOS los servicios + sus extras elegidos
+  const totalPrecio = serviciosSeleccionados.reduce((tot, s) => {
+    const exs = extrasElegidos[s.id] || [];
+    return tot + parseFloat(s.precio_pesos) + exs.reduce((a, e) => a + parseFloat(e.precio_pesos), 0);
+  }, 0);
+
+  const minutosTotal = serviciosSeleccionados.reduce((tot, s) => {
+    const exs = extrasElegidos[s.id] || [];
+    return tot + s.duracion_minutos + exs.reduce((a, e) => a + (e.minutos_adicionales || 0), 0);
+  }, 0);
+
+  const duracionTotalTexto = formatDuracion(minutosTotal);
+  const horaFinEstimada = horaSeleccionada ? sumarMinutos(horaSeleccionada, minutosTotal) : '';
+
+  // ── Selección de servicios (multi) ─────────────
+  const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
+
+  const toggleServicio = (s) => {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
     setPaginaFecha(0);
-    try {
-      const res = await api.get(`/api/extras/servicio/${s.id}`);
-      const lista = res.data || [];
-      setExtrasServicio(lista);
-      setStep(lista.length > 0 ? 2 : 3);
-    } catch {
-      setExtrasServicio([]);
-      setStep(3);
-    }
+    setServiciosSeleccionados(prev =>
+      prev.some(x => x.id === s.id)
+        ? prev.filter(x => x.id !== s.id)
+        : [...prev, s]
+    );
+    // Si se deselecciona, limpiar sus extras elegidos
+    setExtrasElegidos(prev => {
+      if (serviciosSeleccionados.some(x => x.id === s.id)) {
+        const copia = { ...prev };
+        delete copia[s.id];
+        return copia;
+      }
+      return prev;
+    });
   };
 
-  // Pasos visibles (el paso de extras solo existe si el servicio tiene extras)
-  const tieneExtras = extrasServicio.length > 0;
+  // Al confirmar los servicios, cargar los extras de cada uno
+  const handleConfirmarServicios = async () => {
+    if (serviciosSeleccionados.length === 0) return;
+    setError('');
+    setLoading(true);
+    const mapa = {};
+    for (const s of serviciosSeleccionados) {
+      try {
+        const res = await api.get(`/api/extras/servicio/${s.id}`);
+        mapa[s.id] = res.data || [];
+      } catch {
+        mapa[s.id] = [];
+      }
+    }
+    setExtrasPorServicio(mapa);
+    setLoading(false);
+    const hayExtras = Object.values(mapa).some(arr => arr.length > 0);
+    setStep(hayExtras ? 2 : 3);
+  };
+
+  // Toggle de un extra para un servicio puntual
+  const toggleExtra = (servicioId, ex) => {
+    setExtrasElegidos(prev => {
+      const actuales = prev[servicioId] || [];
+      const nuevos = actuales.some(e => e.id === ex.id)
+        ? actuales.filter(e => e.id !== ex.id)
+        : [...actuales, ex];
+      return { ...prev, [servicioId]: nuevos };
+    });
+  };
+
+  const cantExtrasElegidos = Object.values(extrasElegidos).reduce((a, arr) => a + arr.length, 0);
+
+  // Pasos visibles (el paso de extras solo existe si algún servicio tiene extras)
+  const tieneExtras = Object.values(extrasPorServicio).some(arr => arr.length > 0);
   const ordenPasos = tieneExtras ? [1, 2, 3, 4] : [1, 3, 4];
   const idxPaso = Math.max(0, ordenPasos.indexOf(step));
   const totalPasos = ordenPasos.length;
+
+  const volverAServicios = () => {
+    setStep(1);
+    setFechaSeleccionada('');
+    setHoraSeleccionada('');
+  };
 
   const handleSubmit = async () => {
     setError('');
     setLoading(true);
     try {
-      const res = await api.post('/api/turnos', {
-        nombre: nombre.trim(),
-        apellido: apellido.trim(),
-        telefono: telefono.trim(),
-        servicio_id: servicioSeleccionado.id,
-        fecha: fechaSeleccionada,
-        hora_inicio: horaSeleccionada,
-        extras: extrasSeleccionados.map(e => e.id),
-      });
-      setTurnoConfirmado(res.data.turno);
+      if (serviciosSeleccionados.length === 1) {
+        const s = serviciosSeleccionados[0];
+        const res = await api.post('/api/turnos', {
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          telefono: telefono.trim(),
+          servicio_id: s.id,
+          fecha: fechaSeleccionada,
+          hora_inicio: horaSeleccionada,
+          extras: (extrasElegidos[s.id] || []).map(e => e.id),
+        });
+        setTurnoConfirmado(res.data.turno);
+      } else {
+        const res = await api.post('/api/turnos/multi', {
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          telefono: telefono.trim(),
+          fecha: fechaSeleccionada,
+          hora_inicio: horaSeleccionada,
+          servicios: buildServiciosPayload(),
+        });
+        setReservaMultiple(res.data);
+      }
       setStep(5);
     } catch (err) {
       setError(err.response?.data?.error || 'Error al reservar. Intentá de nuevo.');
@@ -165,7 +257,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
         nombre: waitlistNombre.trim(),
         apellido: waitlistApellido.trim(),
         telefono: waitlistTelefono.trim(),
-        servicio_id: servicioSeleccionado.id,
+        servicio_id: serviciosSeleccionados[0]?.id,
         fecha: fechaSeleccionada,
         franja: waitlistFranja
       });
@@ -275,26 +367,44 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
     );
   };
 
-  // STEP 5: Confirmación
-  if (step === 5 && turnoConfirmado) {
+  // STEP 5: Confirmación (turno simple o reserva múltiple)
+  if (step === 5 && (turnoConfirmado || reservaMultiple)) {
+    const turnos = reservaMultiple?.turnos || [];
+    const horaInicioFinal = reservaMultiple ? reservaMultiple.hora_inicio : turnoConfirmado?.hora_inicio;
+    const horaFinFinal = reservaMultiple ? reservaMultiple.hora_fin : null;
     return (
       <div className="card text-center animate-fade-up max-w-lg mx-auto">
         <div className="text-5xl mb-4">🎉</div>
         <h2 className="font-[family-name:var(--font-playfair)] text-2xl font-bold text-[#6B8F6B] mb-2">
-          ¡Turno confirmado!
+          {esMulti ? '¡Turnos confirmados!' : '¡Turno confirmado!'}
         </h2>
-        <div className="bg-[#F5F0EB] rounded-lg p-4 my-6 text-left space-y-2">
-          <p><span className="text-[#A89585]">Servicio:</span> <strong>{turnoConfirmado.servicio?.nombre}</strong></p>
-          {extrasSeleccionados.length > 0 && (
-            <p><span className="text-[#A89585]">Extras:</span> <strong>{extrasSeleccionados.map(e => e.nombre).join(', ')}</strong></p>
-          )}
-          <p><span className="text-[#A89585]">Fecha:</span> <strong>{format(new Date(fechaSeleccionada + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}</strong></p>
-          <p><span className="text-[#A89585]">Hora:</span> <strong>{turnoConfirmado.hora_inicio} hs</strong></p>
-          <p><span className="text-[#A89585]">Cliente:</span> <strong>{turnoConfirmado.cliente_nombre} {turnoConfirmado.cliente_apellido}</strong></p>
-          <p className="pt-2 border-t border-[#E8DDD3]"><span className="text-[#A89585]">Total:</span> <strong className="text-[#6B8F6B]">${totalPrecio.toLocaleString('es-AR')}</strong></p>
+        <div className="bg-[#F5F0EB] rounded-lg p-4 my-6 text-left space-y-3">
+          {serviciosSeleccionados.map((s, idx) => {
+            const exs = extrasElegidos[s.id] || [];
+            const horaServ = reservaMultiple ? turnos[idx]?.hora_inicio : turnoConfirmado?.hora_inicio;
+            return (
+              <div key={s.id} className={idx > 0 ? 'pt-3 border-t border-[#E8DDD3]' : ''}>
+                <p className="font-semibold text-[#2D2A26]">
+                  {esMulti && horaServ ? `${horaServ} · ` : ''}{s.nombre}
+                </p>
+                {exs.length > 0 && (
+                  <p className="text-sm text-[#8B6F5E]">✨ {exs.map(e => e.nombre).join(', ')}</p>
+                )}
+              </div>
+            );
+          })}
+          <div className="pt-3 border-t border-[#E8DDD3] space-y-1">
+            <p><span className="text-[#A89585]">Fecha:</span> <strong>{format(new Date(fechaSeleccionada + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}</strong></p>
+            <p>
+              <span className="text-[#A89585]">Horario:</span>{' '}
+              <strong>{esMulti ? `${horaInicioFinal} a ${horaFinFinal} hs` : `${horaInicioFinal} hs`}</strong>
+            </p>
+            <p><span className="text-[#A89585]">Cliente:</span> <strong>{nombre} {apellido}</strong></p>
+            <p className="pt-2 border-t border-[#E8DDD3]"><span className="text-[#A89585]">Total:</span> <strong className="text-[#6B8F6B]">${totalPrecio.toLocaleString('es-AR')}</strong></p>
+          </div>
         </div>
         <p className="text-sm text-[#A89585] mb-6">
-          Vas a recibir una confirmación por WhatsApp 📱
+          {esMulti ? 'Vas a recibir la confirmación por WhatsApp 📱' : 'Vas a recibir una confirmación por WhatsApp 📱'}
         </p>
         <div className="flex gap-3 justify-center">
           <a href="/mistura" className="text-[#8B6F5E] hover:underline text-sm">Ver mis turnos</a>
@@ -324,62 +434,101 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
         </div>
       )}
 
-      {/* STEP 1: Elegir servicio */}
+      {/* STEP 1: Elegir servicios (uno o varios) */}
       {step === 1 && (
         <div className="space-y-3 animate-fade-up">
-          <p className="font-medium mb-4">¿Qué servicio querés?</p>
-          {servicios.map(s => (
-            <button key={s.id} onClick={() => handleElegirServicio(s)}
-              className="card w-full text-left hover:border-[#8B6F5E] transition-colors cursor-pointer flex justify-between items-center">
+          <p className="font-medium mb-1">¿Qué servicios querés?</p>
+          <p className="text-sm text-[#A89585] mb-4">Podés elegir más de uno y te los agendamos uno detrás del otro. 💆‍♀️</p>
+          {servicios.map(s => {
+            const sel = isServicioSel(s);
+            return (
+              <button key={s.id} onClick={() => toggleServicio(s)}
+                className={`card w-full text-left transition-all cursor-pointer flex justify-between items-center ${sel ? 'border-2 border-[#8B6F5E] bg-[#FFFBF5]' : 'border border-[#E8DDD3] hover:border-[#8B6F5E]'}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#8B6F5E] border-[#8B6F5E] text-white' : 'border-[#D8CABA] text-transparent'}`}>✓</div>
+                  <div>
+                    <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
+                    <p className="text-sm text-[#A89585]">{s.duracion_minutos} minutos</p>
+                  </div>
+                </div>
+                <p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p>
+              </button>
+            );
+          })}
+
+          {serviciosSeleccionados.length > 0 && (
+            <div className="card bg-[#F5F0EB] flex items-center justify-between mt-4">
               <div>
-                <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
-                <p className="text-sm text-[#A89585]">{s.duracion_minutos} minutos</p>
+                <p className="text-xs text-[#A89585]">{serviciosSeleccionados.length} servicio{serviciosSeleccionados.length > 1 ? 's' : ''}</p>
+                <p className="font-bold text-[#8B6F5E] text-xl">${totalPrecio.toLocaleString('es-AR')}</p>
               </div>
-              <p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p>
-            </button>
-          ))}
+              <div className="text-right">
+                <p className="text-xs text-[#A89585]">Duración estimada</p>
+                <p className="font-medium text-[#8B6F5E]">{duracionTotalTexto}</p>
+              </div>
+            </div>
+          )}
+
+          <button onClick={handleConfirmarServicios}
+            disabled={serviciosSeleccionados.length === 0 || loading}
+            className="btn-primary w-full mt-2">
+            {loading ? 'Cargando...' : (
+              serviciosSeleccionados.length === 0
+                ? 'Elegí al menos un servicio'
+                : `Continuar con ${serviciosSeleccionados.length} servicio${serviciosSeleccionados.length > 1 ? 's' : ''}`
+            )}
+          </button>
         </div>
       )}
 
-      {/* STEP 2: Extras */}
+      {/* STEP 2: Extras (una sección por cada servicio que tenga extras) */}
       {step === 2 && (
         <div className="animate-fade-up">
           <div className="card mb-4 flex items-center justify-between">
             <div>
-              <p className="text-sm text-[#A89585]">Servicio elegido</p>
-              <p className="font-semibold">{servicioSeleccionado?.nombre}</p>
+              <p className="text-sm text-[#A89585]">{esMulti ? 'Servicios elegidos' : 'Servicio elegido'}</p>
+              <p className="font-semibold">{serviciosSeleccionados.map(s => s.nombre).join(' · ')}</p>
             </div>
-            <button onClick={() => setStep(1)} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Cambiar</button>
+            <button onClick={volverAServicios} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Cambiar</button>
           </div>
 
           <p className="font-medium mb-1">✨ Dale tu toque</p>
-          <p className="text-sm text-[#A89585] mb-5">Personalizá tu {servicioSeleccionado?.nombre} con uno o más extras. Es opcional, ¡pero quedan increíbles!</p>
+          <p className="text-sm text-[#A89585] mb-5">Personalizá con extras. Es opcional, ¡pero quedan increíbles!</p>
 
-          <div className="space-y-3">
-            {extrasServicio.map(ex => {
-              const sel = extrasSeleccionados.some(e => e.id === ex.id);
-              return (
-                <button key={ex.id} onClick={() => toggleExtra(ex)}
-                  className={`w-full text-left card transition-all cursor-pointer relative ${sel ? 'border-2 border-[#8B6F5E] bg-[#FFFBF5]' : 'border border-[#E8DDD3] hover:border-[#8B6F5E]'}`}>
-                  {ex.destacado && <span className="absolute -top-2 left-4 text-xs px-2 py-0.5 rounded-full bg-[#D4A843] text-white font-medium shadow-sm">⭐ Más pedido</span>}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <div className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#8B6F5E] border-[#8B6F5E] text-white' : 'border-[#D8CABA] text-transparent'}`}>✓</div>
-                      <div>
-                        <p className="font-semibold text-[#2D2A26]">{ex.nombre}</p>
-                        {ex.descripcion && <p className="text-sm text-[#A89585]">{ex.descripcion}</p>}
-                        {ex.minutos_adicionales > 0 && <p className="text-xs text-[#A89585] mt-0.5">+{ex.minutos_adicionales} min</p>}
-                      </div>
-                    </div>
-                    <p className="font-bold text-[#8B6F5E] whitespace-nowrap">+${ex.precio_pesos}</p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          {serviciosSeleccionados.map(s => {
+            const exsDisp = extrasPorServicio[s.id] || [];
+            if (exsDisp.length === 0) return null;
+            return (
+              <div key={s.id} className="mb-6">
+                {esMulti && <p className="text-sm font-semibold text-[#8B6F5E] mb-2">Extras para {s.nombre}</p>}
+                <div className="space-y-3">
+                  {exsDisp.map(ex => {
+                    const sel = (extrasElegidos[s.id] || []).some(e => e.id === ex.id);
+                    return (
+                      <button key={ex.id} onClick={() => toggleExtra(s.id, ex)}
+                        className={`w-full text-left card transition-all cursor-pointer relative ${sel ? 'border-2 border-[#8B6F5E] bg-[#FFFBF5]' : 'border border-[#E8DDD3] hover:border-[#8B6F5E]'}`}>
+                        {ex.destacado && <span className="absolute -top-2 left-4 text-xs px-2 py-0.5 rounded-full bg-[#D4A843] text-white font-medium shadow-sm">⭐ Más pedido</span>}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <div className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#8B6F5E] border-[#8B6F5E] text-white' : 'border-[#D8CABA] text-transparent'}`}>✓</div>
+                            <div>
+                              <p className="font-semibold text-[#2D2A26]">{ex.nombre}</p>
+                              {ex.descripcion && <p className="text-sm text-[#A89585]">{ex.descripcion}</p>}
+                              {ex.minutos_adicionales > 0 && <p className="text-xs text-[#A89585] mt-0.5">+{ex.minutos_adicionales} min</p>}
+                            </div>
+                          </div>
+                          <p className="font-bold text-[#8B6F5E] whitespace-nowrap">+${ex.precio_pesos}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
 
           {/* Total en vivo */}
-          <div className="card mt-5 bg-[#F5F0EB] flex items-center justify-between">
+          <div className="card mt-1 bg-[#F5F0EB] flex items-center justify-between">
             <div>
               <p className="text-xs text-[#A89585]">Total</p>
               <p className="font-bold text-[#8B6F5E] text-xl">${totalPrecio.toLocaleString('es-AR')}</p>
@@ -391,7 +540,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
           </div>
 
           <button onClick={() => setStep(3)} className="btn-primary w-full mt-4">
-            {extrasSeleccionados.length > 0 ? `Continuar con ${extrasSeleccionados.length} extra${extrasSeleccionados.length > 1 ? 's' : ''}` : 'Continuar sin extras'}
+            {cantExtrasElegidos > 0 ? `Continuar con ${cantExtrasElegidos} extra${cantExtrasElegidos > 1 ? 's' : ''}` : 'Continuar sin extras'}
           </button>
         </div>
       )}
@@ -401,17 +550,18 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
         <div className="animate-fade-up">
           <div className="card mb-4 flex items-center justify-between">
             <div>
-              <p className="text-sm text-[#A89585]">Servicio elegido</p>
-              <p className="font-semibold">{servicioSeleccionado?.nombre}</p>
+              <p className="text-sm text-[#A89585]">{esMulti ? 'Servicios elegidos' : 'Servicio elegido'}</p>
+              <p className="font-semibold">{serviciosSeleccionados.map(s => s.nombre).join(' · ')}</p>
+              <p className="text-xs text-[#A89585] mt-0.5">Duración total: {duracionTotalTexto}</p>
             </div>
-            <button onClick={() => setStep(1)} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Cambiar</button>
+            <button onClick={volverAServicios} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Cambiar</button>
           </div>
 
-          {extrasSeleccionados.length > 0 && (
+          {cantExtrasElegidos > 0 && (
             <div className="card mb-4 flex items-center justify-between">
               <div>
                 <p className="text-sm text-[#A89585]">Extras</p>
-                <p className="font-medium text-sm">✨ {extrasSeleccionados.map(e => e.nombre).join(' · ')}</p>
+                <p className="font-medium text-sm">✨ {Object.values(extrasElegidos).flat().map(e => e.nombre).join(' · ')}</p>
               </div>
               <button onClick={() => setStep(2)} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button>
             </div>
@@ -453,12 +603,17 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
                 <button onClick={() => { setFechaSeleccionada(''); setHoraSeleccionada(''); }} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer whitespace-nowrap ml-3">Cambiar fecha</button>
               </div>
 
-              <p className="font-medium mb-3">Elegí un horario</p>
+              <p className="font-medium mb-1">Elegí un horario {esMulti && <span className="text-sm text-[#A89585] font-normal">(de inicio)</span>}</p>
+              {esMulti && <p className="text-sm text-[#A89585] mb-3">Te reservamos el bloque completo de {duracionTotalTexto} a partir de la hora que elijas.</p>}
               {loading ? (
                 <p className="text-[#A89585] text-sm">Cargando horarios...</p>
               ) : sinHorarios ? (
                 <div>
-                  <p className="text-[#C47070] text-sm">No hay horarios disponibles para este día.</p>
+                  <p className="text-[#C47070] text-sm">
+                    {esMulti
+                      ? `No hay un bloque libre de ${duracionTotalTexto} este día. Probá otra fecha o reservá los servicios por separado.`
+                      : 'No hay horarios disponibles para este día.'}
+                  </p>
                   <WaitlistSection prominente={true} />
                 </div>
               ) : (
@@ -476,6 +631,18 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
                       );
                     })}
                   </div>
+
+                  {/* Resumen del bloque elegido: inicio y fin estimado */}
+                  {horaSeleccionada && (
+                    <div className="card bg-[#F5F0EB] mt-3 animate-fade-up flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-[#A89585]">Tu turno</p>
+                        <p className="font-semibold text-[#8B6F5E]">🕐 {horaSeleccionada} a {horaFinEstimada} hs</p>
+                      </div>
+                      <p className="text-sm text-[#A89585]">{duracionTotalTexto}</p>
+                    </div>
+                  )}
+
                   {/* Waitlist sutil cuando hay horarios pero falta alguna franja */}
                   <WaitlistSection prominente={false} />
                 </div>
@@ -495,12 +662,15 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
       {step === 4 && (
         <div className="animate-fade-up">
           <div className="card mb-4">
-            <p className="text-sm text-[#A89585]">Tu turno</p>
+            <p className="text-sm text-[#A89585]">{esMulti ? 'Tus turnos' : 'Tu turno'}</p>
             <p className="font-semibold">
-              {servicioSeleccionado?.nombre} · {format(new Date(fechaSeleccionada + 'T12:00:00'), "EEE d MMM", { locale: es })} · {horaSeleccionada} hs
+              {serviciosSeleccionados.map(s => s.nombre).join(' · ')}
             </p>
-            {extrasSeleccionados.length > 0 && (
-              <p className="text-sm text-[#8B6F5E] mt-1">✨ {extrasSeleccionados.map(e => e.nombre).join(', ')}</p>
+            <p className="text-sm text-[#8B6F5E] mt-1">
+              📅 {format(new Date(fechaSeleccionada + 'T12:00:00'), "EEE d MMM", { locale: es })} · {esMulti ? `${horaSeleccionada} a ${horaFinEstimada} hs` : `${horaSeleccionada} hs`}
+            </p>
+            {cantExtrasElegidos > 0 && (
+              <p className="text-sm text-[#8B6F5E] mt-1">✨ {Object.values(extrasElegidos).flat().map(e => e.nombre).join(', ')}</p>
             )}
             <p className="text-sm font-semibold text-[#6B8F6B] mt-1">Total: ${totalPrecio.toLocaleString('es-AR')} · {duracionTotalTexto}</p>
             <button onClick={() => setStep(3)} className="text-sm text-[#8B6F5E] hover:underline mt-2 cursor-pointer">Cambiar</button>
@@ -530,7 +700,7 @@ const [diasHabilitados, setDiasHabilitados] = useState([]);
           <button onClick={handleSubmit}
             disabled={!nombre || !apellido || telefono.length !== 10 || loading}
             className="btn-primary w-full mt-6">
-            {loading ? 'Reservando...' : 'Confirmar reserva'}
+            {loading ? 'Reservando...' : (esMulti ? 'Confirmar reserva' : 'Confirmar reserva')}
           </button>
         </div>
       )}
