@@ -32,6 +32,38 @@ export default function MisTurnosPage() {
     }
   };
 
+  // Agrupa los turnos: los que comparten grupo_reserva se muestran como un solo bloque.
+  // Mantiene el orden cronológico que ya viene del backend (fecha asc, hora asc).
+  const agruparTurnos = (lista) => {
+    const indiceGrupo = {};
+    const resultado = [];
+    for (const t of lista) {
+      if (t.grupo_reserva) {
+        if (indiceGrupo[t.grupo_reserva] === undefined) {
+          indiceGrupo[t.grupo_reserva] = resultado.length;
+          resultado.push({ tipo: 'grupo', grupo_reserva: t.grupo_reserva, turnos: [t] });
+        } else {
+          resultado[indiceGrupo[t.grupo_reserva]].turnos.push(t);
+        }
+      } else {
+        resultado.push({ tipo: 'simple', turno: t });
+      }
+    }
+    // Ordenar los sub-turnos de cada bloque por su orden dentro del grupo
+    for (const item of resultado) {
+      if (item.tipo === 'grupo') {
+        item.turnos.sort((a, b) => (a.orden_en_grupo || 0) - (b.orden_en_grupo || 0));
+      }
+    }
+    return resultado;
+  };
+
+  const puedeCancelarTurno = (turno) => {
+    const ahora = new Date();
+    const turnoDateTime = new Date(`${turno.fecha.split('T')[0]}T${turno.hora_inicio}`);
+    return (turnoDateTime - ahora) / (1000 * 60 * 60) >= 24;
+  };
+
   const handleCancelar = async (turno) => {
     if (!confirm(`¿Segura que querés cancelar tu turno del ${format(new Date(turno.fecha), "d/MM", { locale: es })} a las ${turno.hora_inicio}?`)) return;
 
@@ -42,6 +74,25 @@ export default function MisTurnosPage() {
       });
       setMensaje('Turno cancelado correctamente');
       setTurnos(prev => prev.filter(t => t.id !== turno.id));
+    } catch (err) {
+      setError(err.response?.data?.error || 'No se pudo cancelar');
+    }
+  };
+
+  // Cancela un bloque completo: el backend cancela todos los turnos del grupo
+  // al recibir el delete de cualquiera de ellos.
+  const handleCancelarGrupo = async (grupo) => {
+    const primero = grupo.turnos[0];
+    const nombres = grupo.turnos.map(t => t.servicio?.nombre).join(' + ');
+    if (!confirm(`¿Segura que querés cancelar tu reserva del ${format(new Date(primero.fecha), "d/MM", { locale: es })} (${nombres})? Se cancelan todos los servicios del bloque.`)) return;
+
+    setError('');
+    try {
+      await api.delete(`/api/turnos/${primero.id}`, {
+        data: { token: primero.token_acceso }
+      });
+      setMensaje('Reserva cancelada correctamente');
+      setTurnos(prev => prev.filter(t => t.grupo_reserva !== grupo.grupo_reserva));
     } catch (err) {
       setError(err.response?.data?.error || 'No se pudo cancelar');
     }
@@ -113,12 +164,58 @@ export default function MisTurnosPage() {
 
       {turnos.length > 0 && (
         <div className="space-y-4">
-          {turnos.map(turno => {
+          {agruparTurnos(turnos).map(item => {
+            // ── Bloque de varios servicios (reserva múltiple) ──
+            if (item.tipo === 'grupo') {
+              const primero = item.turnos[0];
+              const ultimo = item.turnos[item.turnos.length - 1];
+              const puedeCancelar = puedeCancelarTurno(primero);
+              return (
+                <div key={item.grupo_reserva} className="card animate-fade-up">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="inline-block bg-[#F5EBDD] text-[#8B6F5E] text-xs px-2 py-0.5 rounded-full font-medium mb-2">
+                        💆‍♀️ Reserva de {item.turnos.length} servicios
+                      </span>
+                      <p className="text-[#8B6F5E] font-medium">
+                        {format(new Date(primero.fecha), "EEEE d 'de' MMMM", { locale: es })}
+                      </p>
+                      <p className="text-[#A89585] text-sm">
+                        {primero.hora_inicio} - {ultimo.hora_fin} hs
+                      </p>
+                    </div>
+                    <span className="bg-[#E8F5E8] text-[#6B8F6B] text-xs px-3 py-1 rounded-full font-medium whitespace-nowrap">
+                      Confirmado
+                    </span>
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t border-[#E8DDD3] space-y-1.5">
+                    {item.turnos.map(t => (
+                      <div key={t.id} className="flex items-center gap-2 text-sm">
+                        <span className="text-[#A89585] w-12 shrink-0">{t.hora_inicio}</span>
+                        <span className="font-medium text-[#2D2A26]">{t.servicio?.nombre}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {puedeCancelar && (
+                    <div className="mt-4 pt-3 border-t border-[#E8DDD3]">
+                      <button
+                        onClick={() => handleCancelarGrupo(item)}
+                        className="text-sm text-[#C47070] hover:text-red-700 transition-colors cursor-pointer"
+                      >
+                        Cancelar reserva completa
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            // ── Turno simple (1 servicio) ──
+            const turno = item.turno;
             const fechaTurno = new Date(turno.fecha);
-            const ahora = new Date();
-            const turnoDateTime = new Date(`${turno.fecha.split('T')[0]}T${turno.hora_inicio}`);
-            const horasRestantes = (turnoDateTime - ahora) / (1000 * 60 * 60);
-            const puedeCancelar = horasRestantes >= 24;
+            const puedeCancelar = puedeCancelarTurno(turno);
 
             return (
               <div key={turno.id} className="card animate-fade-up">
