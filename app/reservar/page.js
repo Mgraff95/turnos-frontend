@@ -142,6 +142,10 @@ export default function ReservarPage() {
   const duracionTotalTexto = formatDuracion(minutosTotal);
   const horaFinEstimada = horaSeleccionada ? sumarMinutos(horaSeleccionada, minutosTotal) : '';
 
+  // ¿Hay algún extra con precio variable entre los disponibles / elegidos? (para mostrar la leyenda)
+  const hayExtraVariableDisponible = Object.values(extrasPorServicio).flat().some(e => e.precio_variable);
+  const hayExtraVariableElegido = Object.values(extrasElegidos).flat().some(e => e.precio_variable);
+
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
 
@@ -400,7 +404,10 @@ export default function ReservarPage() {
               <strong>{esMulti ? `${horaInicioFinal} a ${horaFinFinal} hs` : `${horaInicioFinal} hs`}</strong>
             </p>
             <p><span className="text-[#A89585]">Cliente:</span> <strong>{nombre} {apellido}</strong></p>
-            <p className="pt-2 border-t border-[#E8DDD3]"><span className="text-[#A89585]">Total:</span> <strong className="text-[#6B8F6B]">${totalPrecio.toLocaleString('es-AR')}</strong></p>
+            <p className="pt-2 border-t border-[#E8DDD3]"><span className="text-[#A89585]">Total{hayExtraVariableElegido ? ' (desde)' : ''}:</span> <strong className="text-[#6B8F6B]">${totalPrecio.toLocaleString('es-AR')}</strong></p>
+            {hayExtraVariableElegido && (
+              <p className="text-xs text-[#A89585]">💡 El precio de los extras "desde" es de referencia y puede variar según el diseño.</p>
+            )}
           </div>
         </div>
         <p className="text-sm text-[#A89585] mb-6">
@@ -515,9 +522,10 @@ export default function ReservarPage() {
                               <p className="font-semibold text-[#2D2A26]">{ex.nombre}</p>
                               {ex.descripcion && <p className="text-sm text-[#A89585]">{ex.descripcion}</p>}
                               {ex.minutos_adicionales > 0 && <p className="text-xs text-[#A89585] mt-0.5">+{ex.minutos_adicionales} min</p>}
+                              {ex.precio_variable && <p className="text-xs text-[#A89585] mt-0.5">💡 Precio de referencia, puede variar según diseño</p>}
                             </div>
                           </div>
-                          <p className="font-bold text-[#8B6F5E] whitespace-nowrap">+${ex.precio_pesos}</p>
+                          <p className="font-bold text-[#8B6F5E] whitespace-nowrap">{ex.precio_variable ? `desde $${ex.precio_pesos}` : `+$${ex.precio_pesos}`}</p>
                         </div>
                       </button>
                     );
@@ -530,7 +538,7 @@ export default function ReservarPage() {
           {/* Total en vivo */}
           <div className="card mt-1 bg-[#F5F0EB] flex items-center justify-between">
             <div>
-              <p className="text-xs text-[#A89585]">Total</p>
+              <p className="text-xs text-[#A89585]">Total{hayExtraVariableElegido ? ' (desde)' : ''}</p>
               <p className="font-bold text-[#8B6F5E] text-xl">${totalPrecio.toLocaleString('es-AR')}</p>
             </div>
             <div className="text-right">
@@ -538,6 +546,9 @@ export default function ReservarPage() {
               <p className="font-medium text-[#8B6F5E]">{duracionTotalTexto}</p>
             </div>
           </div>
+          {hayExtraVariableDisponible && (
+            <p className="text-xs text-[#A89585] mt-2">💡 Los precios marcados como "desde" son de referencia y pueden variar según la complejidad del diseño.</p>
+          )}
 
           <button onClick={() => setStep(3)} className="btn-primary w-full mt-4">
             {cantExtrasElegidos > 0 ? `Continuar con ${cantExtrasElegidos} extra${cantExtrasElegidos > 1 ? 's' : ''}` : 'Continuar sin extras'}
@@ -672,7 +683,10 @@ export default function ReservarPage() {
             {cantExtrasElegidos > 0 && (
               <p className="text-sm text-[#8B6F5E] mt-1">✨ {Object.values(extrasElegidos).flat().map(e => e.nombre).join(', ')}</p>
             )}
-            <p className="text-sm font-semibold text-[#6B8F6B] mt-1">Total: ${totalPrecio.toLocaleString('es-AR')} · {duracionTotalTexto}</p>
+            <p className="text-sm font-semibold text-[#6B8F6B] mt-1">Total{hayExtraVariableElegido ? ' (desde)' : ''}: ${totalPrecio.toLocaleString('es-AR')} · {duracionTotalTexto}</p>
+            {hayExtraVariableElegido && (
+              <p className="text-xs text-[#A89585] mt-0.5">💡 El precio de los extras "desde" es de referencia y puede variar según el diseño.</p>
+            )}
             <button onClick={() => setStep(3)} className="text-sm text-[#8B6F5E] hover:underline mt-2 cursor-pointer">Cambiar</button>
           </div>
 
