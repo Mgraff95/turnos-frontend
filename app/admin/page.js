@@ -45,7 +45,7 @@ export default function AdminPage() {
   const [nuevaNota, setNuevaNota] = useState('');
   const [waitlistEntries, setWaitlistEntries] = useState([]);
   const [extras, setExtras] = useState([]);
-  const [nuevoExtra, setNuevoExtra] = useState({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false });
+  const [nuevoExtra, setNuevoExtra] = useState({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false, precio_variable: false });
   const [editandoExtra, setEditandoExtra] = useState(null);
 
   useEffect(() => { const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
@@ -79,15 +79,15 @@ export default function AdminPage() {
     e.preventDefault();
     if (!nuevoExtra.nombre || nuevoExtra.precio_pesos === '') { showErr('Completá nombre y precio'); return; }
     try {
-      await api.post('/api/extras', { nombre: nuevoExtra.nombre, descripcion: nuevoExtra.descripcion, precio_pesos: parseFloat(nuevoExtra.precio_pesos), minutos_adicionales: parseInt(nuevoExtra.minutos_adicionales) || 0, servicios_ids: nuevoExtra.servicios_ids, destacado: !!nuevoExtra.destacado }, headers());
-      setNuevoExtra({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false });
+      await api.post('/api/extras', { nombre: nuevoExtra.nombre, descripcion: nuevoExtra.descripcion, precio_pesos: parseFloat(nuevoExtra.precio_pesos), minutos_adicionales: parseInt(nuevoExtra.minutos_adicionales) || 0, servicios_ids: nuevoExtra.servicios_ids, destacado: !!nuevoExtra.destacado, precio_variable: !!nuevoExtra.precio_variable }, headers());
+      setNuevoExtra({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false, precio_variable: false });
       showMsg('Extra creado'); loadExtras();
     } catch (err) { showErr(err.response?.data?.error || 'Error al crear extra'); }
   };
   const handleEditarExtra = async (e) => {
     e.preventDefault();
     try {
-      await api.patch(`/api/extras/${editandoExtra.id}`, { nombre: editandoExtra.nombre, descripcion: editandoExtra.descripcion, precio_pesos: parseFloat(editandoExtra.precio_pesos), minutos_adicionales: parseInt(editandoExtra.minutos_adicionales) || 0, servicios_ids: Array.isArray(editandoExtra.servicios_ids) ? editandoExtra.servicios_ids.map(n => parseInt(n)) : [], destacado: !!editandoExtra.destacado }, headers());
+      await api.patch(`/api/extras/${editandoExtra.id}`, { nombre: editandoExtra.nombre, descripcion: editandoExtra.descripcion, precio_pesos: parseFloat(editandoExtra.precio_pesos), minutos_adicionales: parseInt(editandoExtra.minutos_adicionales) || 0, servicios_ids: Array.isArray(editandoExtra.servicios_ids) ? editandoExtra.servicios_ids.map(n => parseInt(n)) : [], destacado: !!editandoExtra.destacado, precio_variable: !!editandoExtra.precio_variable }, headers());
       setEditandoExtra(null); showMsg('Extra actualizado'); loadExtras();
     } catch (err) { showErr('Error al actualizar'); }
   };
@@ -412,6 +412,7 @@ export default function AdminPage() {
                 {servicios.length === 0 && <p className="text-xs text-[#A89585]">Primero creá servicios</p>}
               </div>
             </div>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={nuevoExtra.precio_variable} onChange={e => setNuevoExtra({...nuevoExtra, precio_variable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" /><span className="text-sm text-[#8B6F5E]">💡 Precio variable (se muestra como "desde $X", puede variar según diseño)</span></label>
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={nuevoExtra.destacado} onChange={e => setNuevoExtra({...nuevoExtra, destacado: e.target.checked})} className="w-4 h-4 accent-[#D4A843]" /><span className="text-sm text-[#8B6F5E]">⭐ Destacar (sello "más pedido")</span></label>
               <button type="submit" className="btn-primary">Crear extra</button>
@@ -442,6 +443,7 @@ export default function AdminPage() {
                   })}
                 </div>
               </div>
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={!!editandoExtra.precio_variable} onChange={e => setEditandoExtra({...editandoExtra, precio_variable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" /><span className="text-sm text-[#8B6F5E]">💡 Precio variable (se muestra como "desde $X")</span></label>
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={!!editandoExtra.destacado} onChange={e => setEditandoExtra({...editandoExtra, destacado: e.target.checked})} className="w-4 h-4 accent-[#D4A843]" /><span className="text-sm text-[#8B6F5E]">⭐ Destacar</span></label>
                 <div className="flex gap-2"><button type="submit" className="btn-primary">Guardar</button><button type="button" onClick={() => setEditandoExtra(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div>
@@ -453,7 +455,7 @@ export default function AdminPage() {
                 <p className="font-semibold">{ex.destacado && '⭐ '}{ex.nombre}{!ex.activo && <span className="text-xs text-[#A89585] ml-2">(inactivo)</span>}</p>
                 {ex.descripcion && <p className="text-sm text-[#A89585]">{ex.descripcion}</p>}
                 <div className="flex flex-wrap gap-1 mt-1.5">
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">+${ex.precio_pesos}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">{ex.precio_variable ? `desde $${ex.precio_pesos}` : `+$${ex.precio_pesos}`}</span>
                   {ex.minutos_adicionales > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">+{ex.minutos_adicionales} min</span>}
                   {Array.isArray(ex.servicios_ids) && ex.servicios_ids.length > 0 ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">En: {ex.servicios_ids.map(id => servicios.find(x => x.id === id)?.nombre).filter(Boolean).join(', ')}</span>
