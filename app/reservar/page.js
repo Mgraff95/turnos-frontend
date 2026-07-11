@@ -25,6 +25,8 @@ export default function ReservarPage() {
   const [turnoConfirmado, setTurnoConfirmado] = useState(null);
   const [reservaMultiple, setReservaMultiple] = useState(null);
   const [horariosLoaded, setHorariosLoaded] = useState(false);
+  // Marca si en algún momento se mostró la pantalla de "aprovechá el rato" (para el progreso)
+  const [pasoCompatiblesVisitado, setPasoCompatiblesVisitado] = useState(false);
 
   // Waitlist
   const [mostrarWaitlist, setMostrarWaitlist] = useState(false);
@@ -128,16 +130,61 @@ export default function ReservarPage() {
     return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
   };
 
-  // Total de precio y duración sobre TODOS los servicios + sus extras elegidos
+  // Calcula la duración real del bloque teniendo en cuenta servicios intercalados
+  // (ej. PRP + Pies): un servicio compatible con un servicio "ancla" elegido en el
+  // mismo bloque NO suma tiempo, comparte el horario del ancla. Espeja la misma
+  // lógica que usa el backend (resolverBloqueConIntercalados en availability.js).
+  const calcularDuracionTotalBloque = (serviciosSel, extrasEleg) => {
+    const items = serviciosSel.map(s => {
+      const exs = extrasEleg[s.id] || [];
+      const duracion = s.duracion_minutos + exs.reduce((a, e) => a + (e.minutos_adicionales || 0), 0);
+      return { servicio: s, duracion };
+    });
+
+    const porServicioId = {};
+    items.forEach(it => { porServicioId[it.servicio.id] = it; });
+
+    const anclaDe = {};
+    const contadorPorAncla = {};
+    items.forEach(it => {
+      if (!it.servicio.intercalable) return;
+      const compatibles = it.servicio.servicios_compatibles || [];
+      const maxSimult = (it.servicio.max_simultaneos || 2) - 1;
+      items.forEach(otro => {
+        if (otro.servicio.id === it.servicio.id) return;
+        if (anclaDe[otro.servicio.id]) return;
+        if (!compatibles.includes(otro.servicio.id)) return;
+        const yaAsignados = contadorPorAncla[it.servicio.id] || 0;
+        if (yaAsignados >= maxSimult) return;
+        anclaDe[otro.servicio.id] = it.servicio.id;
+        contadorPorAncla[it.servicio.id] = yaAsignados + 1;
+      });
+    });
+
+    const secuenciales = items.filter(it => !anclaDe[it.servicio.id]);
+    const intercalados = items.filter(it => anclaDe[it.servicio.id]);
+
+    const duracionEfectivaPorId = {};
+    secuenciales.forEach(it => { duracionEfectivaPorId[it.servicio.id] = it.duracion; });
+    intercalados.forEach(it => {
+      const anclaId = anclaDe[it.servicio.id];
+      const ancla = porServicioId[anclaId];
+      const offset = ancla.servicio.intercalar_desde_min || 0;
+      const necesaria = offset + it.duracion;
+      if (necesaria > duracionEfectivaPorId[anclaId]) duracionEfectivaPorId[anclaId] = necesaria;
+    });
+
+    return secuenciales.reduce((s, it) => s + duracionEfectivaPorId[it.servicio.id], 0);
+  };
+
+  // Total de precio sobre TODOS los servicios + sus extras elegidos (el precio no cambia
+  // aunque el tiempo se comparta: cada servicio sigue costando lo suyo)
   const totalPrecio = serviciosSeleccionados.reduce((tot, s) => {
     const exs = extrasElegidos[s.id] || [];
     return tot + parseFloat(s.precio_pesos) + exs.reduce((a, e) => a + parseFloat(e.precio_pesos), 0);
   }, 0);
 
-  const minutosTotal = serviciosSeleccionados.reduce((tot, s) => {
-    const exs = extrasElegidos[s.id] || [];
-    return tot + s.duracion_minutos + exs.reduce((a, e) => a + (e.minutos_adicionales || 0), 0);
-  }, 0);
+  const minutosTotal = calcularDuracionTotalBloque(serviciosSeleccionados, extrasElegidos);
 
   const duracionTotalTexto = formatDuracion(minutosTotal);
   const horaFinEstimada = horaSeleccionada ? sumarMinutos(horaSeleccionada, minutosTotal) : '';
@@ -145,6 +192,26 @@ export default function ReservarPage() {
   // ¿Hay algún extra con precio variable entre los disponibles / elegidos? (para mostrar la leyenda)
   const hayExtraVariableDisponible = Object.values(extrasPorServicio).flat().some(e => e.precio_variable);
   const hayExtraVariableElegido = Object.values(extrasElegidos).flat().some(e => e.precio_variable);
+
+  // ── Servicios compatibles ("aprovechá el rato") ─
+  // Servicios que se pueden sumar SIN sumar tiempo, porque son compatibles con algún
+  // servicio "ancla" (intercalable) ya elegido, y todavía no están en la selección.
+  const compatiblesDisponibles = (() => {
+    const idsSeleccionados = new Set(serviciosSeleccionados.map(s => s.id));
+    const idsCompatibles = new Set();
+    serviciosSeleccionados.forEach(s => {
+      if (s.intercalable && Array.isArray(s.servicios_compatibles)) {
+        s.servicios_compatibles.forEach(id => { if (!idsSeleccionados.has(id)) idsCompatibles.add(id); });
+      }
+    });
+    return servicios.filter(s => idsCompatibles.has(s.id));
+  })();
+
+  // Nombres de los servicios ancla que ofrecen compatibles (para el texto de la pantalla)
+  const anclasConCompatibles = serviciosSeleccionados.filter(
+    s => s.intercalable && Array.isArray(s.servicios_compatibles) && s.servicios_compatibles.length > 0
+  );
+  const anclaNombresTexto = anclasConCompatibles.map(a => a.nombre).join(' y ');
 
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
@@ -167,6 +234,18 @@ export default function ReservarPage() {
       }
       return prev;
     });
+  };
+
+  // Desde el Step 1: si hay servicios compatibles para ofrecer, mostramos esa pantalla
+  // primero; si no, vamos directo a cargar extras (comportamiento de siempre).
+  const handleContinuarDesdeServicios = () => {
+    if (serviciosSeleccionados.length === 0) return;
+    if (compatiblesDisponibles.length > 0) {
+      setPasoCompatiblesVisitado(true);
+      setStep(6);
+    } else {
+      handleConfirmarServicios();
+    }
   };
 
   // Al confirmar los servicios, cargar los extras de cada uno
@@ -202,9 +281,16 @@ export default function ReservarPage() {
 
   const cantExtrasElegidos = Object.values(extrasElegidos).reduce((a, arr) => a + arr.length, 0);
 
-  // Pasos visibles (el paso de extras solo existe si algún servicio tiene extras)
+  // Pasos visibles: 1 servicios, 6 compatibles (si corresponde), 2 extras (si corresponde), 3 fecha/hora, 4 datos
   const tieneExtras = Object.values(extrasPorServicio).some(arr => arr.length > 0);
-  const ordenPasos = tieneExtras ? [1, 2, 3, 4] : [1, 3, 4];
+  const mostrarPasoCompatibles = compatiblesDisponibles.length > 0 || pasoCompatiblesVisitado;
+  const ordenPasos = [
+    1,
+    ...(mostrarPasoCompatibles ? [6] : []),
+    ...(tieneExtras ? [2] : []),
+    3,
+    4,
+  ];
   const idxPaso = Math.max(0, ordenPasos.indexOf(step));
   const totalPasos = ordenPasos.length;
 
@@ -212,6 +298,7 @@ export default function ReservarPage() {
     setStep(1);
     setFechaSeleccionada('');
     setHoraSeleccionada('');
+    setPasoCompatiblesVisitado(false);
   };
 
   const handleSubmit = async () => {
@@ -385,7 +472,10 @@ export default function ReservarPage() {
         <div className="bg-[#F5F0EB] rounded-lg p-4 my-6 text-left space-y-3">
           {serviciosSeleccionados.map((s, idx) => {
             const exs = extrasElegidos[s.id] || [];
-            const horaServ = reservaMultiple ? turnos[idx]?.hora_inicio : turnoConfirmado?.hora_inicio;
+            const turnoDeEsteServicio = reservaMultiple
+              ? turnos.find(t => t.servicio_id === s.id)
+              : turnoConfirmado;
+            const horaServ = turnoDeEsteServicio?.hora_inicio;
             return (
               <div key={s.id} className={idx > 0 ? 'pt-3 border-t border-[#E8DDD3]' : ''}>
                 <p className="font-semibold text-[#2D2A26]">
@@ -476,7 +566,7 @@ export default function ReservarPage() {
             </div>
           )}
 
-          <button onClick={handleConfirmarServicios}
+          <button onClick={handleContinuarDesdeServicios}
             disabled={serviciosSeleccionados.length === 0 || loading}
             className="btn-primary w-full mt-2">
             {loading ? 'Cargando...' : (
@@ -484,6 +574,59 @@ export default function ReservarPage() {
                 ? 'Elegí al menos un servicio'
                 : `Continuar con ${serviciosSeleccionados.length} servicio${serviciosSeleccionados.length > 1 ? 's' : ''}`
             )}
+          </button>
+        </div>
+      )}
+
+      {/* STEP 6: Aprovechá el rato (servicios compatibles con el/los ancla elegidos, ej. PRP) */}
+      {step === 6 && (
+        <div className="animate-fade-up">
+          <div className="card mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[#A89585]">Servicios elegidos</p>
+              <p className="font-semibold">{serviciosSeleccionados.map(s => s.nombre).join(' · ')}</p>
+            </div>
+            <button onClick={volverAServicios} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Cambiar</button>
+          </div>
+
+          <p className="font-medium mb-1">💆‍♀️ Aprovechá el rato</p>
+          <p className="text-sm text-[#A89585] mb-5">
+            Mientras te hacés {anclaNombresTexto}, podés sumar esto sin que tu turno dure más tiempo.
+          </p>
+
+          {compatiblesDisponibles.length > 0 ? (
+            <div className="space-y-3">
+              {compatiblesDisponibles.map(s => (
+                <button key={s.id} onClick={() => toggleServicio(s)}
+                  className="w-full text-left card border border-[#E8DDD3] hover:border-[#8B6F5E] transition-all cursor-pointer flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
+                    <p className="text-xs text-[#6B8F6B] mt-0.5">✨ No suma tiempo a tu turno</p>
+                  </div>
+                  <p className="text-lg font-bold text-[#8B6F5E]">+${s.precio_pesos}</p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="card bg-[#E8F5E8] border-[#C8E6C8]">
+              <p className="text-sm text-[#6B8F6B]">✅ Ya sumaste todo lo disponible para aprovechar el rato.</p>
+            </div>
+          )}
+
+          {/* Total en vivo */}
+          <div className="card mt-4 bg-[#F5F0EB] flex items-center justify-between">
+            <div>
+              <p className="text-xs text-[#A89585]">Total</p>
+              <p className="font-bold text-[#8B6F5E] text-xl">${totalPrecio.toLocaleString('es-AR')}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-[#A89585]">Duración</p>
+              <p className="font-medium text-[#8B6F5E]">{duracionTotalTexto}</p>
+            </div>
+          </div>
+
+          <button onClick={handleConfirmarServicios} className="btn-primary w-full mt-4">
+            Continuar
           </button>
         </div>
       )}
