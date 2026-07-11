@@ -199,10 +199,24 @@ export default function ReservarPage() {
   const hayExtraVariableElegido = Object.values(extrasElegidos).flat().some(e => e.precio_variable);
 
   // ── Servicios compatibles ("aprovechá el rato") ─
-  // Lista a mostrar en el Step 6: la foto congelada, menos los que ya se sumaron.
-  const compatiblesDisponibles = compatiblesOfrecidosSnapshot.filter(
-    s => !serviciosSeleccionados.some(x => x.id === s.id)
-  );
+  // Selección ÚNICA: se muestran todas las opciones de la foto congelada; el cliente
+  // puede elegir como máximo una.
+  const compatibleElegidoId = compatiblesOfrecidosSnapshot.find(
+    s => serviciosSeleccionados.some(x => x.id === s.id)
+  )?.id;
+
+  // Elegir (o cambiar) el compatible: si había otro elegido, lo saca antes de sumar el nuevo.
+  // Si se toca el mismo que ya está elegido, lo deselecciona.
+  const elegirCompatible = (s) => {
+    const yaElegido = serviciosSeleccionados.some(x => x.id === s.id);
+    if (yaElegido) {
+      toggleServicio(s);
+      return;
+    }
+    const otro = compatiblesOfrecidosSnapshot.find(c => c.id !== s.id && serviciosSeleccionados.some(x => x.id === c.id));
+    if (otro) toggleServicio(otro);
+    toggleServicio(s);
+  };
 
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
@@ -286,7 +300,7 @@ export default function ReservarPage() {
 
   // Pasos visibles: 1 servicios, 6 compatibles (si corresponde), 2 extras (si corresponde), 3 fecha/hora, 4 datos
   const tieneExtras = Object.values(extrasPorServicio).some(arr => arr.length > 0);
-  const mostrarPasoCompatibles = compatiblesDisponibles.length > 0 || pasoCompatiblesVisitado;
+  const mostrarPasoCompatibles = compatiblesOfrecidosSnapshot.length > 0 || pasoCompatiblesVisitado;
   const ordenPasos = [
     1,
     ...(mostrarPasoCompatibles ? [6] : []),
@@ -596,21 +610,27 @@ export default function ReservarPage() {
 
           <p className="font-medium mb-1">💆‍♀️ Aprovechá el rato</p>
           <p className="text-sm text-[#A89585] mb-5">
-            Mientras te hacés {anclaNombresSnapshot}, podés sumar esto sin que tu turno dure más tiempo.
+            Mientras te hacés {anclaNombresSnapshot}, podés sumar <strong>una</strong> de estas opciones sin que tu turno dure más tiempo.
           </p>
 
-          {compatiblesDisponibles.length > 0 ? (
+          {compatiblesOfrecidosSnapshot.length > 0 ? (
             <div className="space-y-3">
-              {compatiblesDisponibles.map(s => (
-                <button key={s.id} onClick={() => toggleServicio(s)}
-                  className="w-full text-left card border border-[#E8DDD3] hover:border-[#8B6F5E] transition-all cursor-pointer flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
-                    <p className="text-xs text-[#6B8F6B] mt-0.5">✨ No suma tiempo a tu turno</p>
-                  </div>
-                  <p className="text-lg font-bold text-[#8B6F5E]">+${s.precio_pesos}</p>
-                </button>
-              ))}
+              {compatiblesOfrecidosSnapshot.map(s => {
+                const sel = compatibleElegidoId === s.id;
+                return (
+                  <button key={s.id} onClick={() => elegirCompatible(s)}
+                    className={`w-full text-left card transition-all cursor-pointer flex items-center justify-between ${sel ? 'border-2 border-[#8B6F5E] bg-[#FFFBF5]' : 'border border-[#E8DDD3] hover:border-[#8B6F5E]'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#8B6F5E] border-[#8B6F5E] text-white' : 'border-[#D8CABA] text-transparent'}`}>✓</div>
+                      <div>
+                        <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
+                        <p className="text-xs text-[#6B8F6B] mt-0.5">✨ No suma tiempo a tu turno</p>
+                      </div>
+                    </div>
+                    <p className="text-lg font-bold text-[#8B6F5E]">+${s.precio_pesos}</p>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="card bg-[#E8F5E8] border-[#C8E6C8]">
