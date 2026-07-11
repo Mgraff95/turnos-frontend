@@ -27,6 +27,11 @@ export default function ReservarPage() {
   const [horariosLoaded, setHorariosLoaded] = useState(false);
   // Marca si en algún momento se mostró la pantalla de "aprovechá el rato" (para el progreso)
   const [pasoCompatiblesVisitado, setPasoCompatiblesVisitado] = useState(false);
+  // "Foto" de los compatibles a ofrecer, tomada UNA sola vez al salir del Step 1.
+  // No se recalcula al sumar servicios desde esta pantalla, para que no se encadene
+  // (ej. sumar Pies no debe empezar a ofrecer los compatibles propios de Pies).
+  const [compatiblesOfrecidosSnapshot, setCompatiblesOfrecidosSnapshot] = useState([]);
+  const [anclaNombresSnapshot, setAnclaNombresSnapshot] = useState('');
 
   // Waitlist
   const [mostrarWaitlist, setMostrarWaitlist] = useState(false);
@@ -194,24 +199,10 @@ export default function ReservarPage() {
   const hayExtraVariableElegido = Object.values(extrasElegidos).flat().some(e => e.precio_variable);
 
   // ── Servicios compatibles ("aprovechá el rato") ─
-  // Servicios que se pueden sumar SIN sumar tiempo, porque son compatibles con algún
-  // servicio "ancla" (intercalable) ya elegido, y todavía no están en la selección.
-  const compatiblesDisponibles = (() => {
-    const idsSeleccionados = new Set(serviciosSeleccionados.map(s => s.id));
-    const idsCompatibles = new Set();
-    serviciosSeleccionados.forEach(s => {
-      if (s.intercalable && Array.isArray(s.servicios_compatibles)) {
-        s.servicios_compatibles.forEach(id => { if (!idsSeleccionados.has(id)) idsCompatibles.add(id); });
-      }
-    });
-    return servicios.filter(s => idsCompatibles.has(s.id));
-  })();
-
-  // Nombres de los servicios ancla que ofrecen compatibles (para el texto de la pantalla)
-  const anclasConCompatibles = serviciosSeleccionados.filter(
-    s => s.intercalable && Array.isArray(s.servicios_compatibles) && s.servicios_compatibles.length > 0
+  // Lista a mostrar en el Step 6: la foto congelada, menos los que ya se sumaron.
+  const compatiblesDisponibles = compatiblesOfrecidosSnapshot.filter(
+    s => !serviciosSeleccionados.some(x => x.id === s.id)
   );
-  const anclaNombresTexto = anclasConCompatibles.map(a => a.nombre).join(' y ');
 
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
@@ -237,10 +228,22 @@ export default function ReservarPage() {
   };
 
   // Desde el Step 1: si hay servicios compatibles para ofrecer, mostramos esa pantalla
-  // primero; si no, vamos directo a cargar extras (comportamiento de siempre).
+  // primero (una "foto" fija de lo que hay en ese momento); si no, vamos directo a
+  // cargar extras (comportamiento de siempre).
   const handleContinuarDesdeServicios = () => {
     if (serviciosSeleccionados.length === 0) return;
-    if (compatiblesDisponibles.length > 0) {
+
+    const idsSeleccionados = new Set(serviciosSeleccionados.map(s => s.id));
+    const anclas = serviciosSeleccionados.filter(
+      s => s.intercalable && Array.isArray(s.servicios_compatibles) && s.servicios_compatibles.length > 0
+    );
+    const idsCompatibles = new Set();
+    anclas.forEach(a => a.servicios_compatibles.forEach(id => { if (!idsSeleccionados.has(id)) idsCompatibles.add(id); }));
+    const compatiblesOfrecidos = servicios.filter(s => idsCompatibles.has(s.id));
+
+    if (compatiblesOfrecidos.length > 0) {
+      setCompatiblesOfrecidosSnapshot(compatiblesOfrecidos);
+      setAnclaNombresSnapshot(anclas.map(a => a.nombre).join(' y '));
       setPasoCompatiblesVisitado(true);
       setStep(6);
     } else {
@@ -299,6 +302,8 @@ export default function ReservarPage() {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
     setPasoCompatiblesVisitado(false);
+    setCompatiblesOfrecidosSnapshot([]);
+    setAnclaNombresSnapshot('');
   };
 
   const handleSubmit = async () => {
@@ -591,7 +596,7 @@ export default function ReservarPage() {
 
           <p className="font-medium mb-1">💆‍♀️ Aprovechá el rato</p>
           <p className="text-sm text-[#A89585] mb-5">
-            Mientras te hacés {anclaNombresTexto}, podés sumar esto sin que tu turno dure más tiempo.
+            Mientras te hacés {anclaNombresSnapshot}, podés sumar esto sin que tu turno dure más tiempo.
           </p>
 
           {compatiblesDisponibles.length > 0 ? (
