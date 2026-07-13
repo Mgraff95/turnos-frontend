@@ -150,19 +150,18 @@ export default function ReservarPage() {
     items.forEach(it => { porServicioId[it.servicio.id] = it; });
 
     const anclaDe = {};
-    const contadorPorAncla = {};
+    // Nota: acá NO se limita por `max_simultaneos` — ese campo se usa para el caso de
+    // dos turnos de CLIENTAS DISTINTAS compartiendo horario. En este flujo (una sola
+    // clienta eligiendo servicios juntos) la propia pantalla "Aprovechá el rato" ya
+    // garantiza que como máximo se elija un compatible por ancla.
     items.forEach(it => {
       if (!it.servicio.intercalable) return;
       const compatibles = it.servicio.servicios_compatibles || [];
-      const maxSimult = (it.servicio.max_simultaneos || 2) - 1;
       items.forEach(otro => {
         if (otro.servicio.id === it.servicio.id) return;
         if (anclaDe[otro.servicio.id]) return;
         if (!compatibles.includes(otro.servicio.id)) return;
-        const yaAsignados = contadorPorAncla[it.servicio.id] || 0;
-        if (yaAsignados >= maxSimult) return;
         anclaDe[otro.servicio.id] = it.servicio.id;
-        contadorPorAncla[it.servicio.id] = yaAsignados + 1;
       });
     });
 
