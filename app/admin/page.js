@@ -25,7 +25,7 @@ export default function AdminPage() {
   const [error, setError] = useState('');
   const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2 });
   const [editandoServicio, setEditandoServicio] = useState(null);
-  const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '' });
+  const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
   const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '', notificar: true });
@@ -109,7 +109,21 @@ export default function AdminPage() {
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEliminarRango = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api.delete(`/api/horarios/${id}`, headers()); showMsg('Eliminado'); loadHorarios(); } catch (err) { showErr('Error'); } };
 
-  const handleCrearBloque = async (e) => { e.preventDefault(); try { await api.post('/api/horarios/bloques-cerrados', nuevoBloque, headers()); setNuevoBloque({ fecha: '', motivo: '' }); showMsg('Bloqueo agregado'); loadBloques(); } catch (err) { showErr('Error'); } };
+  const handleCrearBloque = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        fecha: nuevoBloque.fecha,
+        motivo: nuevoBloque.motivo,
+        hora_inicio: nuevoBloque.todoElDia ? '' : nuevoBloque.hora_inicio,
+        hora_fin: nuevoBloque.todoElDia ? '' : nuevoBloque.hora_fin
+      };
+      await api.post('/api/horarios/bloques-cerrados', payload, headers());
+      setNuevoBloque({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
+      showMsg('Bloqueo agregado');
+      loadBloques();
+    } catch (err) { showErr(err.response?.data?.error || 'Error'); }
+  };
   const handleEliminarBloque = async (id) => { try { await api.delete(`/api/horarios/bloques-cerrados/${id}`, headers()); showMsg('Eliminado'); loadBloques(); } catch (err) { showErr('Error'); } };
 
   const handleCrearTurnoManual = async (e) => { e.preventDefault(); try { const res = await api.post('/api/admin/turnos', turnoManual, headers()); setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '', notificar: true }); setMostrarFormTurno(false); showMsg(res.data.notificado === false ? 'Turno creado (sin avisar por WhatsApp)' : 'Turno creado'); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
@@ -507,16 +521,32 @@ export default function AdminPage() {
       {/* BLOQUEOS */}
       {tab === 'bloques' && (<div className="animate-fade-up">
         <div className="card mb-6">
-          <h3 className="font-semibold mb-4 text-[#8B6F5E]">🚫 Bloquear un día</h3>
-          <form onSubmit={handleCrearBloque} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-            <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({...nuevoBloque, fecha: e.target.value})} className="input-field" required /></div>
-            <div><label className="text-xs text-[#A89585] mb-1 block">Motivo</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({...nuevoBloque, motivo: e.target.value})} placeholder="Ej: Feriado" className="input-field" /></div>
-            <button type="submit" className="btn-primary">Bloquear</button>
+          <h3 className="font-semibold mb-4 text-[#8B6F5E]">🚫 Bloquear agenda</h3>
+          <form onSubmit={handleCrearBloque} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({...nuevoBloque, fecha: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Motivo</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({...nuevoBloque, motivo: e.target.value})} placeholder="Ej: Feriado" className="input-field" /></div>
+              <button type="submit" className="btn-primary">Bloquear</button>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={nuevoBloque.todoElDia} onChange={e => setNuevoBloque({...nuevoBloque, todoElDia: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+              <span className="text-sm text-[#8B6F5E]">Todo el día</span>
+            </label>
+            {!nuevoBloque.todoElDia && (
+              <div className="grid grid-cols-2 gap-3 pl-6">
+                <div><label className="text-xs text-[#A89585] mb-1 block">Desde</label><input type="time" value={nuevoBloque.hora_inicio} onChange={e => setNuevoBloque({...nuevoBloque, hora_inicio: e.target.value})} className="input-field" required={!nuevoBloque.todoElDia} /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">Hasta</label><input type="time" value={nuevoBloque.hora_fin} onChange={e => setNuevoBloque({...nuevoBloque, hora_fin: e.target.value})} className="input-field" required={!nuevoBloque.todoElDia} /></div>
+              </div>
+            )}
           </form>
         </div>
-        <div className="space-y-3">{bloques.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay días bloqueados</p> : bloques.map(b => (
+        <div className="space-y-3">{bloques.length === 0 ? <p className="text-center text-[#A89585] py-8">No hay bloqueos cargados</p> : bloques.map(b => (
           <div key={b.id} className="card flex items-center justify-between">
-            <div><p className="font-semibold">{format(fechaLocal(b.fecha), "EEEE d 'de' MMMM yyyy", {locale: es})}</p>{b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}</div>
+            <div>
+              <p className="font-semibold">{format(fechaLocal(b.fecha), "EEEE d 'de' MMMM yyyy", {locale: es})}</p>
+              <p className="text-sm text-[#8B6F5E]">{b.hora_inicio && b.hora_fin ? `⏰ De ${b.hora_inicio} a ${b.hora_fin} hs` : '🚫 Todo el día'}</p>
+              {b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}
+            </div>
             <button onClick={() => handleEliminarBloque(b.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button>
           </div>
         ))}</div>
