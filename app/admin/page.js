@@ -28,7 +28,7 @@ export default function AdminPage() {
   const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
-  const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '', notificar: true });
+  const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicios_ids: [], fecha: '', hora_inicio: '', notificar: true });
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   const [editandoTurno, setEditandoTurno] = useState(null);
   const [horariosEditTurno, setHorariosEditTurno] = useState([]);
@@ -50,7 +50,21 @@ export default function AdminPage() {
 
   useEffect(() => { const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
-  useEffect(() => { if (!turnoManual.fecha || !turnoManual.servicio_id) { setHorariosDisponibles([]); return; } api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${turnoManual.servicio_id}`).then(res => setHorariosDisponibles(res.data.horarios || [])).catch(() => setHorariosDisponibles([])); }, [turnoManual.fecha, turnoManual.servicio_id]);
+  useEffect(() => {
+    if (!turnoManual.fecha || turnoManual.servicios_ids.length === 0) { setHorariosDisponibles([]); return; }
+    if (turnoManual.servicios_ids.length === 1) {
+      api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${turnoManual.servicios_ids[0]}`)
+        .then(res => setHorariosDisponibles(res.data.horarios || []))
+        .catch(() => setHorariosDisponibles([]));
+    } else {
+      api.post('/api/turnos/disponibilidad-multi', {
+        fecha: turnoManual.fecha,
+        servicios: turnoManual.servicios_ids.map(id => ({ servicio_id: id }))
+      })
+        .then(res => setHorariosDisponibles(res.data.horarios || []))
+        .catch(() => setHorariosDisponibles([]));
+    }
+  }, [turnoManual.fecha, turnoManual.servicios_ids]);
   useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
@@ -126,7 +140,26 @@ export default function AdminPage() {
   };
   const handleEliminarBloque = async (id) => { try { await api.delete(`/api/horarios/bloques-cerrados/${id}`, headers()); showMsg('Eliminado'); loadBloques(); } catch (err) { showErr('Error'); } };
 
-  const handleCrearTurnoManual = async (e) => { e.preventDefault(); try { const res = await api.post('/api/admin/turnos', turnoManual, headers()); setTurnoManual({ nombre: '', apellido: '', telefono: '', servicio_id: '', fecha: '', hora_inicio: '', notificar: true }); setMostrarFormTurno(false); showMsg(res.data.notificado === false ? 'Turno creado (sin avisar por WhatsApp)' : 'Turno creado'); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
+  const handleCrearTurnoManual = async (e) => {
+    e.preventDefault();
+    try {
+      const base = {
+        nombre: turnoManual.nombre,
+        apellido: turnoManual.apellido,
+        telefono: turnoManual.telefono,
+        fecha: turnoManual.fecha,
+        hora_inicio: turnoManual.hora_inicio,
+        notificar: turnoManual.notificar
+      };
+      const res = turnoManual.servicios_ids.length === 1
+        ? await api.post('/api/admin/turnos', { ...base, servicio_id: turnoManual.servicios_ids[0] }, headers())
+        : await api.post('/api/admin/turnos/multi', { ...base, servicios: turnoManual.servicios_ids }, headers());
+      setTurnoManual({ nombre: '', apellido: '', telefono: '', servicios_ids: [], fecha: '', hora_inicio: '', notificar: true });
+      setMostrarFormTurno(false);
+      showMsg(res.data.notificado === false ? 'Turno creado (sin avisar por WhatsApp)' : 'Turno creado');
+      loadTurnos();
+    } catch (err) { showErr(err.response?.data?.error || 'Error'); }
+  };
 
   const handleAbrirEdicion = (turno) => {
     const fechaStr = turno.fecha.split('T')[0];
@@ -244,7 +277,40 @@ export default function AdminPage() {
       {/* TURNOS */}
       {tab === 'turnos' && (<div className="animate-fade-up">
         <div className="mb-6"><button onClick={() => setMostrarFormTurno(!mostrarFormTurno)} className={`btn-primary ${mostrarFormTurno ? 'opacity-70' : ''}`}>{mostrarFormTurno ? '✕ Cancelar' : '➕ Agregar turno manual'}</button></div>
-        {mostrarFormTurno && (<div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3><form onSubmit={handleCrearTurnoManual} className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({...turnoManual, nombre: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({...turnoManual, apellido: e.target.value})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({...turnoManual, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div></div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={turnoManual.servicio_id} onChange={e => setTurnoManual({...turnoManual, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div><div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({...turnoManual, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div><div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={turnoManual.hora_inicio} onChange={e => setTurnoManual({...turnoManual, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{horariosDisponibles.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio} - {h.hora_fin}</option>)}</select>{turnoManual.fecha && turnoManual.servicio_id && horariosDisponibles.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div></div><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={turnoManual.notificar} onChange={e => setTurnoManual({...turnoManual, notificar: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" /><span className="text-sm text-[#8B6F5E]">📲 Avisar por WhatsApp a la clienta</span></label><button type="submit" disabled={!turnoManual.hora_inicio} className="btn-primary">Crear turno</button></form></div>)}
+        {mostrarFormTurno && (<div className="card mb-6"><h3 className="font-semibold mb-4 text-[#8B6F5E]">Nuevo turno manual</h3><form onSubmit={handleCrearTurnoManual} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={turnoManual.nombre} onChange={e => setTurnoManual({...turnoManual, nombre: e.target.value})} className="input-field" required /></div>
+            <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={turnoManual.apellido} onChange={e => setTurnoManual({...turnoManual, apellido: e.target.value})} className="input-field" required /></div>
+            <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={turnoManual.telefono} onChange={e => setTurnoManual({...turnoManual, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
+          </div>
+          <div>
+            <label className="text-xs text-[#A89585] mb-2 block">Servicios (elegí uno o varios)</label>
+            <div className="flex flex-wrap gap-2">
+              {servicios.map(s => {
+                const idStr = String(s.id);
+                const checked = turnoManual.servicios_ids.includes(idStr);
+                return (
+                  <label key={s.id} className={`px-3 py-1.5 rounded-full text-xs cursor-pointer border ${checked ? 'bg-[#8B6F5E] text-white border-[#8B6F5E]' : 'bg-white text-[#8B6F5E] border-[#E8DDD3]'}`}>
+                    <input type="checkbox" checked={checked} onChange={e => {
+                      const next = e.target.checked ? [...turnoManual.servicios_ids, idStr] : turnoManual.servicios_ids.filter(id => id !== idStr);
+                      setTurnoManual({...turnoManual, servicios_ids: next, hora_inicio: ''});
+                    }} className="hidden" />
+                    {s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})
+                  </label>
+                );
+              })}
+            </div>
+            {turnoManual.servicios_ids.length > 1 && (
+              <p className="text-xs text-[#6B8F6B] mt-2">✨ Si alguno de estos servicios está configurado como compatible con otro (ej. PRP + Pies), se van a agendar en simultáneo sin sumar tiempo.</p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={turnoManual.fecha} onChange={e => setTurnoManual({...turnoManual, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div>
+            <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={turnoManual.hora_inicio} onChange={e => setTurnoManual({...turnoManual, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{horariosDisponibles.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio} - {h.hora_fin}</option>)}</select>{turnoManual.fecha && turnoManual.servicios_ids.length > 0 && horariosDisponibles.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={turnoManual.notificar} onChange={e => setTurnoManual({...turnoManual, notificar: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" /><span className="text-sm text-[#8B6F5E]">📲 Avisar por WhatsApp a la clienta</span></label>
+          <button type="submit" disabled={!turnoManual.hora_inicio || turnoManual.servicios_ids.length === 0} className="btn-primary">Crear turno</button>
+        </form></div>)}
 
         {/* Calendario mensual */}
         <div className="card mb-4">
