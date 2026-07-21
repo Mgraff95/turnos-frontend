@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths } from 'date-fns';
+import { format, startOfWeek, addDays, addWeeks } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
@@ -32,9 +32,10 @@ export default function AdminPage() {
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   const [editandoTurno, setEditandoTurno] = useState(null);
   const [horariosEditTurno, setHorariosEditTurno] = useState([]);
-  // Calendario de turnos
-  const [mesCalendario, setMesCalendario] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(1); return d; });
-  const [diaSeleccionadoCal, setDiaSeleccionadoCal] = useState(null);
+  // Calendario de turnos (semana / día, estilo Google Calendar)
+  const [vistaCalendario, setVistaCalendario] = useState('semana');
+  const [fechaCalendario, setFechaCalendario] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
+  const [turnoDetalle, setTurnoDetalle] = useState(null);
   const [periodoMetricas, setPeriodoMetricas] = useState('mes');
   const [clientes, setClientes] = useState([]);
   const [busquedaCliente, setBusquedaCliente] = useState('');
@@ -85,7 +86,7 @@ export default function AdminPage() {
   const handleEliminarNota = async (notaId) => { if (!confirm('¿Eliminar esta nota?')) return; try { await api.delete(`/api/admin/clientes/${clienteSeleccionado}/notas/${notaId}`, headers()); loadFichaCliente(clienteSeleccionado); showMsg('Nota eliminada'); } catch (e) { showErr('Error'); } };
   const handleCancelarTurno = async (turno) => {
     if (!confirm(`¿Cancelar el turno de ${turno.cliente_nombre} ${turno.cliente_apellido}?\n\nSe le enviará un WhatsApp avisándole.`)) return;
-    try { await api.delete(`/api/admin/turnos/${turno.id}`, headers()); showMsg(`Turno de ${turno.cliente_nombre} cancelado`); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error al cancelar'); }
+    try { await api.delete(`/api/admin/turnos/${turno.id}`, headers()); showMsg(`Turno de ${turno.cliente_nombre} cancelado`); setTurnoDetalle(null); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error al cancelar'); }
   };
   const handleEliminarWaitlist = async (id) => { if (!confirm('¿Eliminar de la lista de espera?')) return; try { await api.delete(`/api/waitlist/${id}`, headers()); showMsg('Eliminado de waitlist'); loadWaitlist(); } catch (e) { showErr('Error'); } };
 
@@ -169,7 +170,7 @@ export default function AdminPage() {
     e.preventDefault();
     try {
       await api.patch(`/api/admin/turnos/${editandoTurno.id}`, { nombre: editandoTurno.nombre, apellido: editandoTurno.apellido, telefono: editandoTurno.telefono, servicio_id: editandoTurno.servicio_id, fecha: editandoTurno.fecha, hora_inicio: editandoTurno.hora_inicio }, headers());
-      setEditandoTurno(null); showMsg('Turno actualizado'); loadTurnos();
+      setEditandoTurno(null); setTurnoDetalle(null); showMsg('Turno actualizado'); loadTurnos();
     } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
   };
 
@@ -214,22 +215,49 @@ export default function AdminPage() {
     return base + ex;
   };
 
-  // ── Calendario de turnos ───────────────────
+  // ── Calendario de turnos (semana / día, estilo Google Calendar) ───────────────────
   const turnosPorFechaCal = {};
   turnos.filter(t => t.estado === 'confirmado').forEach(t => { const key = t.fecha.split('T')[0]; (turnosPorFechaCal[key] = turnosPorFechaCal[key] || []).push(t); });
-  Object.values(turnosPorFechaCal).forEach(arr => arr.sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio)));
 
-  const franjaDia = (arr) => {
-    if (!arr || arr.length === 0) return '';
-    const inicio = arr.reduce((m, t) => t.hora_inicio < m ? t.hora_inicio : m, arr[0].hora_inicio);
-    const fin = arr.reduce((m, t) => { const f = t.hora_fin || t.hora_inicio; return f > m ? f : m; }, arr[0].hora_fin || arr[0].hora_inicio);
-    return `${inicio}–${fin}`;
+  const horaAMinCal = (h) => { const [hh, mm] = h.split(':').map(Number); return hh * 60 + mm; };
+  const minAHoraCal = (m) => `${Math.floor(m / 60).toString().padStart(2, '0')}:00`;
+
+  // Rango horario visible en la grilla: toma el horario más temprano/tardío configurado
+  // (redondeado a la hora), con 09:00–20:00 como respaldo si todavía no hay horarios cargados.
+  const horasAbiertas = horarios.filter(h => h.abierto !== false);
+  const inicioMinCal = horasAbiertas.length > 0 ? Math.min(...horasAbiertas.map(h => horaAMinCal(h.hora_inicio))) : 9 * 60;
+  const finMinCal = horasAbiertas.length > 0 ? Math.max(...horasAbiertas.map(h => horaAMinCal(h.hora_fin))) : 20 * 60;
+  const GRID_INICIO = Math.floor(inicioMinCal / 60) * 60;
+  const GRID_FIN = Math.min(24 * 60, Math.ceil(finMinCal / 60) * 60);
+  const PX_MIN = 1.2; // 72px por hora
+  const ALTURA_GRID = (GRID_FIN - GRID_INICIO) * PX_MIN;
+  const horasEje = []; for (let m = GRID_INICIO; m <= GRID_FIN; m += 60) horasEje.push(m);
+
+  // Colores estables por servicio (mismo servicio = mismo color siempre)
+  const PALETA_CAL = ['#8B6F5E', '#6B8F6B', '#7C93C4', '#C4837C', '#B08FC4', '#C4A857', '#5FA8A0', '#C46B95'];
+  const colorServicioCal = (servicioId) => PALETA_CAL[servicioId % PALETA_CAL.length];
+
+  // Asigna "carriles" a turnos solapados dentro de un mismo día, para mostrarlos lado a lado
+  // (ej. servicios intercalados de un mismo grupo_reserva, o dos clientas distintas a la misma hora)
+  const layoutTurnosDia = (arr) => {
+    const eventos = [...arr].sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio)).map(t => ({ ...t, _fin: t.hora_fin || t.hora_inicio }));
+    const columnas = [];
+    eventos.forEach(ev => {
+      let colocado = false;
+      for (const col of columnas) {
+        if (col[col.length - 1]._fin <= ev.hora_inicio) { col.push(ev); colocado = true; break; }
+      }
+      if (!colocado) columnas.push([ev]);
+    });
+    const totalCols = columnas.length || 1;
+    columnas.forEach((col, colIdx) => col.forEach(ev => { ev._col = colIdx; ev._totalCols = totalCols; }));
+    return eventos;
   };
 
-  const primerDiaMes = startOfMonth(mesCalendario);
-  const diasDelMes = eachDayOfInterval({ start: primerDiaMes, end: endOfMonth(mesCalendario) });
-  const offsetInicio = (primerDiaMes.getDay() + 6) % 7;
-  const turnosDiaSel = diaSeleccionadoCal ? (turnosPorFechaCal[diaSeleccionadoCal] || []) : [];
+  const inicioSemanaCal = startOfWeek(fechaCalendario, { weekStartsOn: 1 });
+  const diasVisiblesCal = vistaCalendario === 'semana'
+    ? Array.from({ length: 7 }).map((_, i) => addDays(inicioSemanaCal, i))
+    : [fechaCalendario];
 
   // Tarjeta de turno reutilizable (con edición inline, extras y total)
   const renderTurnoCard = (turno) => (
@@ -312,51 +340,81 @@ export default function AdminPage() {
           <button type="submit" disabled={!turnoManual.hora_inicio || turnoManual.servicios_ids.length === 0} className="btn-primary">Crear turno</button>
         </form></div>)}
 
-        {/* Calendario mensual */}
+        {/* Calendario semana / día */}
         <div className="card mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setMesCalendario(m => addMonths(m, -1))} className="w-9 h-9 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center hover:border-[#8B6F5E] cursor-pointer">‹</button>
-            <h3 className="font-semibold text-[#8B6F5E] capitalize">{format(mesCalendario, "MMMM yyyy", { locale: es })}</h3>
-            <button onClick={() => setMesCalendario(m => addMonths(m, 1))} className="w-9 h-9 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center hover:border-[#8B6F5E] cursor-pointer">›</button>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setFechaCalendario(f => vistaCalendario === 'semana' ? addWeeks(f, -1) : addDays(f, -1))} className="w-9 h-9 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center hover:border-[#8B6F5E] cursor-pointer">‹</button>
+              <button onClick={() => { const d = new Date(); d.setHours(0, 0, 0, 0); setFechaCalendario(d); }} className="px-3 h-9 rounded-lg border border-[#E8DDD3] text-xs font-medium text-[#8B6F5E] hover:border-[#8B6F5E] cursor-pointer">Hoy</button>
+              <button onClick={() => setFechaCalendario(f => vistaCalendario === 'semana' ? addWeeks(f, 1) : addDays(f, 1))} className="w-9 h-9 rounded-lg border border-[#E8DDD3] text-[#8B6F5E] text-lg flex items-center justify-center hover:border-[#8B6F5E] cursor-pointer">›</button>
+              <h3 className="font-semibold text-[#8B6F5E] capitalize ml-1">
+                {vistaCalendario === 'semana'
+                  ? `${format(inicioSemanaCal, "d MMM", { locale: es })} – ${format(addDays(inicioSemanaCal, 6), "d MMM yyyy", { locale: es })}`
+                  : format(fechaCalendario, "EEEE d 'de' MMMM", { locale: es })}
+              </h3>
+            </div>
+            <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1">
+              <button onClick={() => setVistaCalendario('semana')} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${vistaCalendario === 'semana' ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Semana</button>
+              <button onClick={() => setVistaCalendario('dia')} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${vistaCalendario === 'dia' ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Día</button>
+            </div>
           </div>
-          <div className="grid grid-cols-7 gap-1 mb-1">
-            {['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d => <div key={d} className="text-center text-xs text-[#A89585] font-medium py-1">{d}</div>)}
+
+          <div className="overflow-x-auto">
+            <div className="flex" style={{ minWidth: vistaCalendario === 'semana' ? '640px' : '260px' }}>
+              {/* Eje de horas */}
+              <div className="shrink-0 w-12 text-right pr-2">
+                <div style={{ height: '30px' }} />
+                {horasEje.map(m => (
+                  <div key={m} style={{ height: `${PX_MIN * 60}px` }} className="text-[10px] text-[#A89585] -translate-y-2">{minAHoraCal(m)}</div>
+                ))}
+              </div>
+
+              {/* Columnas de días */}
+              <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${diasVisiblesCal.length}, minmax(0, 1fr))` }}>
+                {diasVisiblesCal.map(dia => {
+                  const key = format(dia, 'yyyy-MM-dd');
+                  const esHoy = key === hoyStr;
+                  const eventosDia = layoutTurnosDia(turnosPorFechaCal[key] || []);
+                  return (
+                    <div key={key} className="border-l border-[#F0E9E1] first:border-l-0 relative">
+                      <div className={`h-[30px] flex flex-col items-center justify-center ${esHoy ? 'text-[#8B6F5E] font-bold' : 'text-[#A89585]'}`}>
+                        <span className="text-[10px] uppercase leading-none">{format(dia, 'EEE', { locale: es })}</span>
+                        <span className={`text-xs leading-none mt-0.5 ${esHoy ? 'bg-[#8B6F5E] text-white rounded-full w-5 h-5 flex items-center justify-center' : ''}`}>{format(dia, 'd')}</span>
+                      </div>
+                      <div className="relative" style={{ height: `${ALTURA_GRID}px` }}>
+                        {horasEje.map(m => (
+                          <div key={m} className="absolute left-0 right-0 border-t border-[#F5F0EB]" style={{ top: `${(m - GRID_INICIO) * PX_MIN}px` }} />
+                        ))}
+                        {eventosDia.map(ev => {
+                          const top = (horaAMinCal(ev.hora_inicio) - GRID_INICIO) * PX_MIN;
+                          const altura = Math.max((horaAMinCal(ev.hora_fin || ev.hora_inicio) - horaAMinCal(ev.hora_inicio)) * PX_MIN, 18);
+                          const anchoPct = 100 / ev._totalCols;
+                          return (
+                            <button key={ev.id} onClick={() => setTurnoDetalle(ev)}
+                              className="absolute rounded-md px-1.5 py-0.5 text-left text-white text-[10px] leading-tight overflow-hidden shadow-sm cursor-pointer hover:brightness-95"
+                              style={{ top: `${top}px`, height: `${altura}px`, left: `${ev._col * anchoPct}%`, width: `calc(${anchoPct}% - 2px)`, backgroundColor: colorServicioCal(ev.servicio_id) }}>
+                              <p className="font-semibold truncate">{ev.hora_inicio} {ev.cliente_nombre}</p>
+                              {altura > 28 && <p className="truncate opacity-90">{ev.servicio?.nombre}</p>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: offsetInicio }).map((_, i) => <div key={'e'+i} />)}
-            {diasDelMes.map(dia => {
-              const key = format(dia, 'yyyy-MM-dd');
-              const arr = turnosPorFechaCal[key] || [];
-              const count = arr.length;
-              const esHoy = key === hoyStr;
-              const esSeleccionado = key === diaSeleccionadoCal;
-              return (
-                <button key={key} onClick={() => setDiaSeleccionadoCal(esSeleccionado ? null : key)}
-                  className={`min-h-[56px] sm:min-h-[68px] rounded-lg border p-1 text-left transition-colors cursor-pointer flex flex-col ${esSeleccionado ? 'border-[#8B6F5E] bg-[#FFFBF5] ring-1 ring-[#8B6F5E]' : count > 0 ? 'bg-[#FFFBF5] border-[#E8DDD3] hover:border-[#8B6F5E]' : 'bg-white border-[#F0E9E1] hover:border-[#E8DDD3]'}`}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm font-semibold ${esHoy ? 'text-white bg-[#8B6F5E] rounded-full w-6 h-6 flex items-center justify-center' : count > 0 ? 'text-[#2D2A26]' : 'text-[#C9BCAD]'}`}>{format(dia, 'd')}</span>
-                    {count > 0 && <span className="text-[10px] font-bold text-white bg-[#8B6F5E] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{count}</span>}
-                  </div>
-                  {count > 0 && <span className="hidden sm:block text-[9px] text-[#8B6F5E] font-medium mt-auto leading-tight">{franjaDia(arr)}</span>}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-xs text-[#A89585] mt-3 text-center">Tocá un día para ver sus turnos</p>
+          <p className="text-xs text-[#A89585] mt-3 text-center">Tocá un turno para ver el detalle o editarlo</p>
         </div>
 
-        {/* Detalle del día seleccionado */}
-        {diaSeleccionadoCal && (
-          <div className="animate-fade-up">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-[#8B6F5E] capitalize">{format(fechaLocal(diaSeleccionadoCal), "EEEE d 'de' MMMM", { locale: es })}{turnosDiaSel.length > 0 && <span className="text-xs font-normal text-[#A89585] ml-2 normal-case">({turnosDiaSel.length} {turnosDiaSel.length === 1 ? 'turno' : 'turnos'} · {franjaDia(turnosDiaSel)})</span>}</h3>
-              <button onClick={() => setDiaSeleccionadoCal(null)} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer whitespace-nowrap ml-3">Cerrar</button>
+        {/* Modal de detalle / edición de turno */}
+        {turnoDetalle && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 animate-fade-up" onClick={() => { setTurnoDetalle(null); setEditandoTurno(null); }}>
+            <div className="max-w-lg w-full" onClick={e => e.stopPropagation()}>
+              {renderTurnoCard(turnos.find(t => t.id === turnoDetalle.id) || turnoDetalle)}
+              <button onClick={() => { setTurnoDetalle(null); setEditandoTurno(null); }} className="mt-3 w-full text-center text-xs text-white/80 hover:text-white cursor-pointer">✕ Cerrar</button>
             </div>
-            {turnosDiaSel.length === 0 ? (
-              <p className="text-center text-[#A89585] py-6">No hay turnos para este día</p>
-            ) : (
-              <div className="space-y-3">{turnosDiaSel.map(turno => renderTurnoCard(turno))}</div>
-            )}
           </div>
         )}
       </div>)}
