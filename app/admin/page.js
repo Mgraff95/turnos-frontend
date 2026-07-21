@@ -219,6 +219,9 @@ export default function AdminPage() {
   const turnosPorFechaCal = {};
   turnos.filter(t => t.estado === 'confirmado').forEach(t => { const key = t.fecha.split('T')[0]; (turnosPorFechaCal[key] = turnosPorFechaCal[key] || []).push(t); });
 
+  const bloquesPorFechaCal = {};
+  bloques.forEach(b => { const key = b.fecha.split('T')[0]; (bloquesPorFechaCal[key] = bloquesPorFechaCal[key] || []).push(b); });
+
   const horaAMinCal = (h) => { const [hh, mm] = h.split(':').map(Number); return hh * 60 + mm; };
   const minAHoraCal = (m) => `${Math.floor(m / 60).toString().padStart(2, '0')}:00`;
 
@@ -375,9 +378,11 @@ export default function AdminPage() {
                   const key = format(dia, 'yyyy-MM-dd');
                   const esHoy = key === hoyStr;
                   const eventosDia = layoutTurnosDia(turnosPorFechaCal[key] || []);
+                  const bloqueosDia = bloquesPorFechaCal[key] || [];
+                  const bloqueoCompleto = bloqueosDia.find(b => !b.hora_inicio || !b.hora_fin);
                   return (
                     <div key={key} className="border-l border-[#F0E9E1] first:border-l-0 relative">
-                      <div className={`h-[30px] flex flex-col items-center justify-center ${esHoy ? 'text-[#8B6F5E] font-bold' : 'text-[#A89585]'}`}>
+                      <div className={`h-[30px] flex flex-col items-center justify-center ${esHoy ? 'text-[#8B6F5E] font-bold' : bloqueoCompleto ? 'text-[#C47070]' : 'text-[#A89585]'}`}>
                         <span className="text-[10px] uppercase leading-none">{format(dia, 'EEE', { locale: es })}</span>
                         <span className={`text-xs leading-none mt-0.5 ${esHoy ? 'bg-[#8B6F5E] text-white rounded-full w-5 h-5 flex items-center justify-center' : ''}`}>{format(dia, 'd')}</span>
                       </div>
@@ -385,13 +390,33 @@ export default function AdminPage() {
                         {horasEje.map(m => (
                           <div key={m} className="absolute left-0 right-0 border-t border-[#F5F0EB]" style={{ top: `${(m - GRID_INICIO) * PX_MIN}px` }} />
                         ))}
+                        {bloqueoCompleto && (
+                          <button onClick={() => { if (confirm(`¿Eliminar el bloqueo${bloqueoCompleto.motivo ? ` de "${bloqueoCompleto.motivo}"` : ''}?`)) handleEliminarBloque(bloqueoCompleto.id); }}
+                            className="absolute inset-0 z-0 flex items-start justify-center pt-2 cursor-pointer"
+                            style={{ backgroundImage: 'repeating-linear-gradient(45deg, rgba(196,112,112,0.12), rgba(196,112,112,0.12) 6px, rgba(196,112,112,0.22) 6px, rgba(196,112,112,0.22) 12px)' }}
+                            title="Tocá para eliminar el bloqueo">
+                            <span className="text-[9px] font-semibold text-[#C47070] bg-white/80 rounded px-1.5 py-0.5">🚫 {bloqueoCompleto.motivo || 'Bloqueado'}</span>
+                          </button>
+                        )}
+                        {!bloqueoCompleto && bloqueosDia.filter(b => b.hora_inicio && b.hora_fin).map(b => {
+                          const top = Math.max((horaAMinCal(b.hora_inicio) - GRID_INICIO) * PX_MIN, 0);
+                          const altura = Math.max((horaAMinCal(b.hora_fin) - horaAMinCal(b.hora_inicio)) * PX_MIN, 14);
+                          return (
+                            <button key={b.id} onClick={() => { if (confirm(`¿Eliminar el bloqueo de ${b.hora_inicio} a ${b.hora_fin}${b.motivo ? ` (${b.motivo})` : ''}?`)) handleEliminarBloque(b.id); }}
+                              className="absolute left-0 right-0 z-0 rounded-sm px-1 py-0.5 text-left cursor-pointer overflow-hidden"
+                              style={{ top: `${top}px`, height: `${altura}px`, backgroundImage: 'repeating-linear-gradient(45deg, rgba(196,112,112,0.18), rgba(196,112,112,0.18) 6px, rgba(196,112,112,0.3) 6px, rgba(196,112,112,0.3) 12px)', border: '1px solid rgba(196,112,112,0.4)' }}
+                              title={`Bloqueado${b.motivo ? `: ${b.motivo}` : ''}`}>
+                              <span className="text-[9px] font-semibold text-[#C47070] truncate block">🚫 {b.motivo || 'Bloqueado'}</span>
+                            </button>
+                          );
+                        })}
                         {eventosDia.map(ev => {
                           const top = (horaAMinCal(ev.hora_inicio) - GRID_INICIO) * PX_MIN;
                           const altura = Math.max((horaAMinCal(ev.hora_fin || ev.hora_inicio) - horaAMinCal(ev.hora_inicio)) * PX_MIN, 18);
                           const anchoPct = 100 / ev._totalCols;
                           return (
                             <button key={ev.id} onClick={() => setTurnoDetalle(ev)}
-                              className="absolute rounded-md px-1.5 py-0.5 text-left text-white text-[10px] leading-tight overflow-hidden shadow-sm cursor-pointer hover:brightness-95"
+                              className="absolute z-10 rounded-md px-1.5 py-0.5 text-left text-white text-[10px] leading-tight overflow-hidden shadow-sm cursor-pointer hover:brightness-95"
                               style={{ top: `${top}px`, height: `${altura}px`, left: `${ev._col * anchoPct}%`, width: `calc(${anchoPct}% - 2px)`, backgroundColor: colorServicioCal(ev.servicio_id) }}>
                               <p className="font-semibold truncate">{ev.hora_inicio} {ev.cliente_nombre}</p>
                               {altura > 28 && <p className="truncate opacity-90">{ev.servicio?.nombre}</p>}
