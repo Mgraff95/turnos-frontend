@@ -499,6 +499,9 @@ export default function ReservarPage() {
                 <p className="font-semibold text-[#2D2A26]">
                   {esMulti && horaServ ? `${horaServ} · ` : ''}{s.nombre}
                 </p>
+                {s.incluye_nota && s.nota && (
+                  <p className="text-sm text-[#6B8F6B]">✨ {s.nota}</p>
+                )}
                 {exs.length > 0 && (
                   <p className="text-sm text-[#8B6F5E]">✨ {exs.map(e => e.nombre).join(', ')}</p>
                 )}
@@ -564,6 +567,7 @@ export default function ReservarPage() {
                   <div>
                     <p className="font-semibold text-[#2D2A26]">{s.nombre}</p>
                     <p className="text-sm text-[#A89585]">{s.duracion_minutos} minutos</p>
+                    {s.incluye_nota && s.nota && <p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {s.nota}</p>}
                   </div>
                 </div>
                 <p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p>

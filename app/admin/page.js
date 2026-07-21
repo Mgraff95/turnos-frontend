@@ -23,7 +23,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
-  const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2 });
+  const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' });
   const [editandoServicio, setEditandoServicio] = useState(null);
   const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
@@ -116,9 +116,9 @@ export default function AdminPage() {
   const handleLogin = async (e) => { e.preventDefault(); setLoginError(''); setLoading(true); try { const res = await api.post('/api/admin/login', { email, password }); setToken(res.data.token); sessionStorage.setItem('admin_token', res.data.token); } catch (err) { setLoginError(err.response?.data?.error || 'Error al iniciar sesión'); } finally { setLoading(false); } };
   const handleLogout = () => { setToken(null); sessionStorage.removeItem('admin_token'); };
 
-  const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
+  const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '', incluye_nota: false, nota: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
   const handleDesactivarServicio = async (id) => { if (!confirm('¿Desactivar este servicio? Ya no aparecerá para reservas.')) return; try { await api.patch(`/api/servicios/${id}`, { activo: false }, headers()); showMsg('Servicio desactivado'); loadServicios(); } catch (err) { showErr('Error al desactivar'); } };
-  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2 }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
+  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
 
   const handleCrearRango = async (e) => { e.preventDefault(); try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
@@ -455,6 +455,18 @@ export default function AdminPage() {
               <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({...nuevoServicio, precio_pesos: e.target.value})} placeholder="500" className="input-field" required /></div>
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Crear</button></div>
             </div>
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer mb-2">
+                <input type="checkbox" checked={nuevoServicio.incluye_nota} onChange={e => setNuevoServicio({...nuevoServicio, incluye_nota: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                <span className="text-sm font-medium text-[#8B6F5E]">Incluye nota informativa para clientas</span>
+              </label>
+              {nuevoServicio.incluye_nota && (
+                <div className="pl-6">
+                  <input type="text" value={nuevoServicio.nota} onChange={e => setNuevoServicio({...nuevoServicio, nota: e.target.value})} placeholder="Ej: Incluye 2 diseños simples de uñas" className="input-field" />
+                  <p className="text-xs text-[#A89585] mt-1">Se muestra a la clienta al reservar y se le recuerda por WhatsApp.</p>
+                </div>
+              )}
+            </div>
             <div className="border-t border-[#F5F0EB] pt-4">
               <label className="flex items-center gap-2 cursor-pointer mb-3">
                 <input type="checkbox" checked={nuevoServicio.intercalable} onChange={e => setNuevoServicio({...nuevoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
@@ -494,6 +506,18 @@ export default function AdminPage() {
                 <div><label className="text-xs text-[#A89585] mb-1 block">Precio</label><input type="number" value={editandoServicio.precio_pesos} onChange={e => setEditandoServicio({...editandoServicio, precio_pesos: e.target.value})} className="input-field" /></div>
                 <div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Guardar</button><button type="button" onClick={() => setEditandoServicio(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div>
               </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={!!editandoServicio.incluye_nota} onChange={e => setEditandoServicio({...editandoServicio, incluye_nota: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                  <span className="text-sm font-medium text-[#8B6F5E]">Incluye nota informativa para clientas</span>
+                </label>
+                {editandoServicio.incluye_nota && (
+                  <div className="pl-6">
+                    <input type="text" value={editandoServicio.nota || ''} onChange={e => setEditandoServicio({...editandoServicio, nota: e.target.value})} placeholder="Ej: Incluye 2 diseños simples de uñas" className="input-field" />
+                    <p className="text-xs text-[#A89585] mt-1">Se muestra a la clienta al reservar y se le recuerda por WhatsApp.</p>
+                  </div>
+                )}
+              </div>
               <div className="border-t border-[#F5F0EB] pt-4">
                 <label className="flex items-center gap-2 cursor-pointer mb-3">
                   <input type="checkbox" checked={!!editandoServicio.intercalable} onChange={e => setEditandoServicio({...editandoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
@@ -528,6 +552,9 @@ export default function AdminPage() {
               <div>
                 <p className="font-semibold">{s.nombre}</p>
                 <p className="text-sm text-[#A89585]">{s.duracion_minutos} min</p>
+                {s.incluye_nota && s.nota && (
+                  <p className="text-xs text-[#6B8F6B] font-medium mt-1">✨ {s.nota}</p>
+                )}
                 {s.intercalable && (
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🔀 Intercalable desde min {s.intercalar_desde_min ?? 0}</span>
