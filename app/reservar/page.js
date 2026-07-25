@@ -220,18 +220,6 @@ export default function ReservarPage() {
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
  
-  // Ícono de línea (manual de marca) según palabras clave en el nombre del servicio.
-  // Si el nombre no matchea ninguna keyword, no se muestra ícono (evita mostrar uno incorrecto).
-  const getServicioIcono = (nombre = '') => {
-    const n = nombre.toLowerCase();
-    if (n.includes('uñ')) return '/icons/icon-unas.png';
-    if (n.includes('ceja')) return '/icons/icon-cejas.png';
-    if (n.includes('pestañ')) return '/icons/icon-pestanas.png';
-    if (n.includes('facial')) return '/icons/icon-faciales.png';
-    if (n.includes('prp')) return '/icons/icon-amor.png';
-    return null;
-  };
- 
   const toggleServicio = (s) => {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
@@ -571,16 +559,10 @@ export default function ReservarPage() {
           <p className="text-sm text-[#8A8580] mb-4">Podés elegir más de uno y te los agendamos uno detrás del otro. 💆‍♀️</p>
           {servicios.map(s => {
             const sel = isServicioSel(s);
-            const icono = getServicioIcono(s.nombre);
             return (
               <button key={s.id} onClick={() => toggleServicio(s)}
                 className={`card w-full text-left transition-all cursor-pointer flex justify-between items-center ${sel ? 'border-2 border-[#E6005C] bg-[#FDEFF5]' : 'border border-[#F5D9E4] hover:border-[#E6005C]'}`}>
                 <div className="flex items-center gap-3">
-                  {icono && (
-                    <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${sel ? 'bg-[#F2C4D8]' : 'bg-[#FCE9F0]'}`}>
-                      <img src={icono} alt="" className="w-5 h-5" />
-                    </div>
-                  )}
                   <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#E6005C] border-[#E6005C] text-white' : 'border-[#F2C4D8] text-transparent'}`}>✓</div>
                   <div>
                     <p className="font-semibold text-[#3A3A3A]">{s.nombre}</p>
@@ -638,16 +620,10 @@ export default function ReservarPage() {
             <div className="space-y-3">
               {compatiblesOfrecidosSnapshot.map(s => {
                 const sel = compatibleElegidoId === s.id;
-                const icono = getServicioIcono(s.nombre);
                 return (
                   <button key={s.id} onClick={() => elegirCompatible(s)}
                     className={`w-full text-left card transition-all cursor-pointer flex items-center justify-between ${sel ? 'border-2 border-[#E6005C] bg-[#FDEFF5]' : 'border border-[#F5D9E4] hover:border-[#E6005C]'}`}>
                     <div className="flex items-center gap-3">
-                      {icono && (
-                        <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${sel ? 'bg-[#F2C4D8]' : 'bg-[#FCE9F0]'}`}>
-                          <img src={icono} alt="" className="w-5 h-5" />
-                        </div>
-                      )}
                       <div className={`w-5 h-5 rounded-full border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#E6005C] border-[#E6005C] text-white' : 'border-[#F2C4D8] text-transparent'}`}>✓</div>
                       <div>
                         <p className="font-semibold text-[#3A3A3A]">{s.nombre}</p>
