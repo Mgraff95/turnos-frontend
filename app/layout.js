@@ -1,3 +1,4 @@
+
 import { Playfair_Display, Montserrat, Allura } from 'next/font/google';
 import './globals.css';
  
@@ -33,7 +34,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="es" className={`${playfair.variable} ${montserrat.variable} ${allura.variable}`}>
-      <body className="min-h-screen bg-[#FFF7FA] text-[#3A3A3A] font-[family-name:var(--font-montserrat)]">
+      <body className="min-h-screen flex flex-col bg-[#FFF7FA] text-[#3A3A3A] font-[family-name:var(--font-montserrat)]">
         <header className="bg-white/90 backdrop-blur-sm border-b border-[#F5D9E4] sticky top-0 z-50">
           <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
             <a href="/" className="flex items-center gap-2">
@@ -49,10 +50,10 @@ export default function RootLayout({ children }) {
             </nav>
           </div>
         </header>
-        <main className="max-w-4xl mx-auto px-4 py-8">
+        <main className="max-w-4xl mx-auto px-4 py-8 flex-1 w-full">
           {children}
         </main>
-        <footer className="bg-[#3A3A3A] mt-16">
+        <footer className="bg-[#3A3A3A] mt-16 shrink-0">
           <div className="max-w-4xl mx-auto px-4 py-6 text-center text-sm text-[#F2A7C0] tracking-wide">
             © 2026 @danielayanetbeauty · Buenos Aires
           </div>
