@@ -23,11 +23,39 @@ const allura = Allura({
 });
  
 export const metadata = {
+  metadataBase: new URL('https://turnos.danielayanetbeauty.com'),
   title: 'Daniela Yanet Beauty - Reservá tu turno',
   description: 'Sistema de reservas online para el estudio de uñas @danielayanetbeauty',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon-512.png', type: 'image/png', sizes: '512x512' },
+    ],
     shortcut: '/favicon.ico',
+    apple: '/favicon-512.png',
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'es_AR',
+    url: 'https://turnos.danielayanetbeauty.com',
+    siteName: 'Daniela Yanet Beauty',
+    title: 'Daniela Yanet Beauty - Reservá tu turno',
+    description: 'Reservá tu turno online en el estudio de uñas @danielayanetbeauty',
+    images: [
+      {
+        url: '/og-image.jpg',
+        width: 1200,
+        height: 630,
+        alt: 'Daniela Yanet Beauty',
+        type: 'image/jpeg',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Daniela Yanet Beauty - Reservá tu turno',
+    description: 'Reservá tu turno online en el estudio de uñas @danielayanetbeauty',
+    images: ['/og-image.jpg'],
   },
 };
  
