@@ -3,13 +3,13 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { format, startOfWeek, addDays, addWeeks } from 'date-fns';
 import { es } from 'date-fns/locale';
-
+ 
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-
+ 
 // Convierte una fecha date-only ("2026-06-20" o "2026-06-20T00:00:00.000Z")
 // en un Date anclado al MEDIODÍA local, para que nunca se corra de día por la zona horaria (UTC-3).
 const fechaLocal = (f) => new Date(String(f).split('T')[0] + 'T12:00:00');
-
+ 
 export default function AdminPage() {
   const [token, setToken] = useState(null);
   const [email, setEmail] = useState('');
@@ -53,8 +53,8 @@ export default function AdminPage() {
   const [extras, setExtras] = useState([]);
   const [nuevoExtra, setNuevoExtra] = useState({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false, precio_variable: false });
   const [editandoExtra, setEditandoExtra] = useState(null);
-
-  useEffect(() => { const saved = typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
+ 
+  useEffect(() => { const saved = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
   useEffect(() => {
     if (!turnoManual.fecha || turnoManual.servicios_ids.length === 0) { setHorariosDisponibles([]); return; }
@@ -103,7 +103,7 @@ export default function AdminPage() {
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
   useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);
-
+ 
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
   const loadTurnos = async () => { try { const res = await api.get('/api/admin/turnos', headers()); setTurnos(res.data); } catch (err) { if (err.response?.status === 401) handleLogout(); } };
@@ -113,7 +113,7 @@ export default function AdminPage() {
   const loadClientes = async () => { try { const res = await api.get('/api/admin/clientes', headers()); setClientes(res.data); } catch (e) {} };
   const loadWaitlist = async () => { try { const res = await api.get('/api/waitlist/admin', headers()); setWaitlistEntries(res.data); } catch (e) {} };
   const loadExtras = async () => { try { const res = await api.get('/api/extras', headers()); setExtras(res.data); } catch (e) {} };
-
+ 
   const loadFichaCliente = async (telefono) => { setLoadingFicha(true); try { const res = await api.get(`/api/admin/clientes/${telefono}`, headers()); setFichaCliente(res.data); setClienteSeleccionado(telefono); } catch (e) { showErr('Error cargando ficha'); } finally { setLoadingFicha(false); } };
   const handleAgregarNota = async () => { if (!nuevaNota.trim() || !clienteSeleccionado) return; try { await api.post(`/api/admin/clientes/${clienteSeleccionado}/notas`, { texto: nuevaNota }, headers()); setNuevaNota(''); loadFichaCliente(clienteSeleccionado); showMsg('Nota agregada'); } catch (e) { showErr('Error al agregar nota'); } };
   const handleEliminarNota = async (notaId) => { if (!confirm('¿Eliminar esta nota?')) return; try { await api.delete(`/api/admin/clientes/${clienteSeleccionado}/notas/${notaId}`, headers()); loadFichaCliente(clienteSeleccionado); showMsg('Nota eliminada'); } catch (e) { showErr('Error'); } };
@@ -122,7 +122,7 @@ export default function AdminPage() {
     try { await api.delete(`/api/admin/turnos/${turno.id}`, headers()); showMsg(`Turno de ${turno.cliente_nombre} cancelado`); setTurnoDetalle(null); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error al cancelar'); }
   };
   const handleEliminarWaitlist = async (id) => { if (!confirm('¿Eliminar de la lista de espera?')) return; try { await api.delete(`/api/waitlist/${id}`, headers()); showMsg('Eliminado de waitlist'); loadWaitlist(); } catch (e) { showErr('Error'); } };
-
+ 
   const handleCrearExtra = async (e) => {
     e.preventDefault();
     if (!nuevoExtra.nombre || nuevoExtra.precio_pesos === '') { showErr('Completá nombre y precio'); return; }
@@ -142,21 +142,21 @@ export default function AdminPage() {
   const handleToggleDestacado = async (extra) => { try { await api.patch(`/api/extras/${extra.id}`, { destacado: !extra.destacado }, headers()); loadExtras(); } catch (e) { showErr('Error'); } };
   const handleDesactivarExtra = async (id) => { if (!confirm('¿Desactivar este extra? Ya no aparecerá para las clientas.')) return; try { await api.delete(`/api/extras/${id}`, headers()); showMsg('Extra desactivado'); loadExtras(); } catch (e) { showErr('Error'); } };
   const handleActivarExtra = async (id) => { try { await api.patch(`/api/extras/${id}`, { activo: true }, headers()); showMsg('Extra activado'); loadExtras(); } catch (e) { showErr('Error'); } };
-
+ 
   const showMsg = (msg) => { setMensaje(msg); setError(''); setTimeout(() => setMensaje(''), 3000); };
   const showErr = (msg) => { setError(msg); setMensaje(''); setTimeout(() => setError(''), 5000); };
-
-  const handleLogin = async (e) => { e.preventDefault(); setLoginError(''); setLoading(true); try { const res = await api.post('/api/admin/login', { email, password }); setToken(res.data.token); sessionStorage.setItem('admin_token', res.data.token); } catch (err) { setLoginError(err.response?.data?.error || 'Error al iniciar sesión'); } finally { setLoading(false); } };
-  const handleLogout = () => { setToken(null); sessionStorage.removeItem('admin_token'); };
-
+ 
+  const handleLogin = async (e) => { e.preventDefault(); setLoginError(''); setLoading(true); try { const res = await api.post('/api/admin/login', { email, password }); setToken(res.data.token); localStorage.setItem('admin_token', res.data.token); } catch (err) { setLoginError(err.response?.data?.error || 'Error al iniciar sesión'); } finally { setLoading(false); } };
+  const handleLogout = () => { setToken(null); localStorage.removeItem('admin_token'); };
+ 
   const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '', incluye_nota: false, nota: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
   const handleDesactivarServicio = async (id) => { if (!confirm('¿Desactivar este servicio? Ya no aparecerá para reservas.')) return; try { await api.patch(`/api/servicios/${id}`, { activo: false }, headers()); showMsg('Servicio desactivado'); loadServicios(); } catch (err) { showErr('Error al desactivar'); } };
   const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
-
+ 
   const handleCrearRango = async (e) => { e.preventDefault(); try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEliminarRango = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api.delete(`/api/horarios/${id}`, headers()); showMsg('Eliminado'); loadHorarios(); } catch (err) { showErr('Error'); } };
-
+ 
   const handleCrearBloque = async (e) => {
     e.preventDefault();
     try {
@@ -198,7 +198,7 @@ export default function AdminPage() {
       loadBloques();
     } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
   };
-
+ 
   const toggleExtraManual = (servicioId, ex) => {
     setExtrasManualElegidos(prev => {
       const actuales = prev[servicioId] || [];
@@ -210,7 +210,7 @@ export default function AdminPage() {
     // Cambiar los extras puede cambiar la duración total: forzamos a re-elegir la hora
     setTurnoManual(tm => ({ ...tm, hora_inicio: '' }));
   };
-
+ 
   const handleCrearTurnoManual = async (e) => {
     e.preventDefault();
     try {
@@ -233,7 +233,7 @@ export default function AdminPage() {
       loadTurnos();
     } catch (err) { showErr(err.response?.data?.error || 'Error'); }
   };
-
+ 
   const handleAbrirEdicion = (turno) => {
     const fechaStr = turno.fecha.split('T')[0];
     setEditandoTurno({ id: turno.id, nombre: turno.cliente_nombre, apellido: turno.cliente_apellido, telefono: turno.cliente_telefono, servicio_id: String(turno.servicio_id), fecha: fechaStr, hora_inicio: turno.hora_inicio, _origFecha: fechaStr, _origServicio: String(turno.servicio_id), _origHora: turno.hora_inicio });
@@ -245,7 +245,7 @@ export default function AdminPage() {
       setEditandoTurno(null); setTurnoDetalle(null); showMsg('Turno actualizado'); loadTurnos();
     } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
   };
-
+ 
   const filtrarPorPeriodo = useCallback((items) => { const ahora = new Date(); return items.filter(t => { const fecha = fechaLocal(t.fecha); if (periodoMetricas === 'semana') { const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7); return fecha >= hace7; } if (periodoMetricas === 'mes') { return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear(); } return true; }); }, [periodoMetricas]);
   const turnosFiltrados = filtrarPorPeriodo(turnos);
   const confirmadosFiltrados = turnosFiltrados.filter(t => t.estado === 'confirmado');
@@ -257,20 +257,20 @@ export default function AdminPage() {
   const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const turnosPorDia = Array(7).fill(0); confirmadosFiltrados.forEach(t => { turnosPorDia[fechaLocal(t.fecha).getDay()]++; }); const maxDia = Math.max(...turnosPorDia, 1);
   const turnosPorHora = {}; confirmadosFiltrados.forEach(t => { const h = t.hora_inicio.split(':')[0]; turnosPorHora[h] = (turnosPorHora[h] || 0) + 1; }); const horasOrdenadas = Object.entries(turnosPorHora).sort((a, b) => b[1] - a[1]).slice(0, 5); const maxHora = horasOrdenadas[0]?.[1] || 1;
   const clienteMapM = {}; confirmadosFiltrados.forEach(t => { const k = t.cliente_telefono; if (!clienteMapM[k]) clienteMapM[k] = { nombre: `${t.cliente_nombre} ${t.cliente_apellido}`, telefono: k, visitas: 0 }; clienteMapM[k].visitas++; }); const topClientesM = Object.values(clienteMapM).sort((a, b) => b.visitas - a.visitas).slice(0, 5);
-
+ 
   const clientesFiltrados = clientes.filter(c => { if (!busquedaCliente) return true; const q = busquedaCliente.toLowerCase(); return c.nombre.toLowerCase().includes(q) || c.apellido.toLowerCase().includes(q) || c.telefono.includes(q); }).sort((a, b) => { if (ordenClientes === 'frecuencia') return b.totalConfirmados - a.totalConfirmados; if (ordenClientes === 'reciente') return new Date(b.ultimaVisita) - new Date(a.ultimaVisita); if (ordenClientes === 'gasto') return b.gastoTotal - a.gastoTotal; return 0; });
-
+ 
   const waitlistPorFecha = {};
   waitlistEntries.forEach(w => { const fechaKey = w.fecha.split('T')[0]; if (!waitlistPorFecha[fechaKey]) waitlistPorFecha[fechaKey] = []; waitlistPorFecha[fechaKey].push(w); });
-
+ 
   // LOGIN
   if (!token) { return ( <div className="max-w-sm mx-auto mt-16"><div className="text-center mb-8"><span className="text-4xl">🔐</span><h2 className="font-[family-name:var(--font-playfair)] text-2xl font-bold text-[#8B6F5E] mt-3">Admin</h2></div><form onSubmit={handleLogin} className="card animate-fade-up">{loginError && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-4 text-sm">{loginError}</div>}<div className="space-y-4"><div><label className="text-sm text-[#A89585] mb-1 block">Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="input-field" required /></div><div><label className="text-sm text-[#A89585] mb-1 block">Contraseña</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input-field" required /></div><button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Entrando...' : 'Entrar'}</button></div></form></div> ); }
-
+ 
   const hoyStr = format(new Date(), 'yyyy-MM-dd');
   const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.estado === 'confirmado').sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio));
   const turnosHoy = turnos.filter(t => t.fecha.split('T')[0] === hoyStr && t.estado === 'confirmado');
   const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
-
+ 
   const opcionesHoraEdit = (() => {
     if (!editandoTurno) return [];
     const lista = [...horariosEditTurno];
@@ -280,23 +280,23 @@ export default function AdminPage() {
     }
     return lista;
   })();
-
+ 
   const totalTurno = (turno) => {
     const base = parseFloat(turno.servicio?.precio_pesos || 0);
     const ex = (turno.extras || []).reduce((s, e) => s + parseFloat(e.precio_pesos || 0), 0);
     return base + ex;
   };
-
+ 
   // ── Calendario de turnos (semana / día, estilo Google Calendar) ───────────────────
   const turnosPorFechaCal = {};
   turnos.filter(t => t.estado === 'confirmado').forEach(t => { const key = t.fecha.split('T')[0]; (turnosPorFechaCal[key] = turnosPorFechaCal[key] || []).push(t); });
-
+ 
   const bloquesPorFechaCal = {};
   bloques.forEach(b => { const key = b.fecha.split('T')[0]; (bloquesPorFechaCal[key] = bloquesPorFechaCal[key] || []).push(b); });
-
+ 
   const horaAMinCal = (h) => { const [hh, mm] = h.split(':').map(Number); return hh * 60 + mm; };
   const minAHoraCal = (m) => `${Math.floor(m / 60).toString().padStart(2, '0')}:00`;
-
+ 
   // Rango horario visible en la grilla: toma el horario más temprano/tardío configurado
   // (redondeado a la hora), con 09:00–20:00 como respaldo si todavía no hay horarios cargados.
   const horasAbiertas = horarios.filter(h => h.abierto !== false);
@@ -307,11 +307,11 @@ export default function AdminPage() {
   const PX_MIN = 1.2; // 72px por hora
   const ALTURA_GRID = (GRID_FIN - GRID_INICIO) * PX_MIN;
   const horasEje = []; for (let m = GRID_INICIO; m <= GRID_FIN; m += 60) horasEje.push(m);
-
+ 
   // Colores estables por servicio (mismo servicio = mismo color siempre)
   const PALETA_CAL = ['#8B6F5E', '#6B8F6B', '#7C93C4', '#C4837C', '#B08FC4', '#C4A857', '#5FA8A0', '#C46B95'];
   const colorServicioCal = (servicioId) => PALETA_CAL[servicioId % PALETA_CAL.length];
-
+ 
   // Asigna "carriles" a turnos solapados dentro de un mismo día, para mostrarlos lado a lado
   // (ej. servicios intercalados de un mismo grupo_reserva, o dos clientas distintas a la misma hora)
   const layoutTurnosDia = (arr) => {
@@ -328,12 +328,12 @@ export default function AdminPage() {
     columnas.forEach((col, colIdx) => col.forEach(ev => { ev._col = colIdx; ev._totalCols = totalCols; }));
     return eventos;
   };
-
+ 
   const inicioSemanaCal = startOfWeek(fechaCalendario, { weekStartsOn: 1 });
   const diasVisiblesCal = vistaCalendario === 'semana'
     ? Array.from({ length: 7 }).map((_, i) => addDays(inicioSemanaCal, i))
     : [fechaCalendario];
-
+ 
   // Tarjeta de turno reutilizable (con edición inline, extras y total)
   const renderTurnoCard = (turno) => (
     <div key={turno.id} className="card">{editandoTurno?.id === turno.id ? (
@@ -355,7 +355,7 @@ export default function AdminPage() {
       <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p>{turno.extras && turno.extras.length > 0 && (<p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {turno.extras.map(e => e.nombre).join(', ')} · Total ${totalTurno(turno).toLocaleString('es-AR')}</p>)}</div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
     )}</div>
   );
-
+ 
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -364,19 +364,19 @@ export default function AdminPage() {
       </div>
       {mensaje && <div className="bg-green-50 border border-green-200 text-green-700 p-3 rounded-lg mb-4 text-sm animate-fade-up">{mensaje}</div>}
       {error && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-4 text-sm animate-fade-up">{error}</div>}
-
+ 
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{turnosHoy.length}</p><p className="text-xs text-[#A89585]">Turnos hoy</p></div>
         <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{turnosProximos.length}</p><p className="text-xs text-[#A89585]">Próximos</p></div>
         <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{servicios.length}</p><p className="text-xs text-[#A89585]">Servicios</p></div>
       </div>
-
+ 
       <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6 flex-wrap">
         {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setClienteSeleccionado(null); setFichaCliente(null); }} className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
       </div>
-
+ 
       {/* TURNOS */}
       {tab === 'turnos' && (<div className="animate-fade-up">
         <div className="mb-6"><button onClick={() => setMostrarFormTurno(!mostrarFormTurno)} className={`btn-primary ${mostrarFormTurno ? 'opacity-70' : ''}`}>{mostrarFormTurno ? '✕ Cancelar' : '➕ Agregar turno manual'}</button></div>
@@ -444,7 +444,7 @@ export default function AdminPage() {
           <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={turnoManual.notificar} onChange={e => setTurnoManual({...turnoManual, notificar: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" /><span className="text-sm text-[#8B6F5E]">📲 Avisar por WhatsApp a la clienta</span></label>
           <button type="submit" disabled={!turnoManual.hora_inicio || turnoManual.servicios_ids.length === 0} className="btn-primary">Crear turno</button>
         </form></div>)}
-
+ 
         {/* Calendario semana / día */}
         <div className="card mb-4">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -463,7 +463,7 @@ export default function AdminPage() {
               <button onClick={() => setVistaCalendario('dia')} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${vistaCalendario === 'dia' ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Día</button>
             </div>
           </div>
-
+ 
           <div className="overflow-x-auto">
             <div className="flex" style={{ minWidth: vistaCalendario === 'semana' ? '640px' : '260px' }}>
               {/* Eje de horas */}
@@ -473,7 +473,7 @@ export default function AdminPage() {
                   <div key={m} style={{ height: `${PX_MIN * 60}px` }} className="text-[10px] text-[#A89585] -translate-y-2">{minAHoraCal(m)}</div>
                 ))}
               </div>
-
+ 
               {/* Columnas de días */}
               <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${diasVisiblesCal.length}, minmax(0, 1fr))` }}>
                 {diasVisiblesCal.map(dia => {
@@ -534,7 +534,7 @@ export default function AdminPage() {
           </div>
           <p className="text-xs text-[#A89585] mt-3 text-center">Tocá un turno para ver el detalle o editarlo</p>
         </div>
-
+ 
         {/* Modal de detalle / edición de turno */}
         {turnoDetalle && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 animate-fade-up" onClick={() => { setTurnoDetalle(null); setEditandoTurno(null); }}>
@@ -545,7 +545,7 @@ export default function AdminPage() {
           </div>
         )}
       </div>)}
-
+ 
       {/* SERVICIOS */}
       {tab === 'servicios' && (<div className="animate-fade-up">
         <div className="card mb-6">
@@ -676,7 +676,7 @@ export default function AdminPage() {
           )}</div>
         ))}</div>
       </div>)}
-
+ 
       {/* EXTRAS */}
       {tab === 'extras' && (<div className="animate-fade-up">
         <p className="text-sm text-[#A89585] mb-4">Adicionales que la clienta puede sumar a un servicio (suman precio y tiempo). Asigná cada extra a los servicios donde se ofrece.</p>
@@ -763,7 +763,7 @@ export default function AdminPage() {
           )}</div>
         ))}</div>)}
       </div>)}
-
+ 
       {/* HORARIOS */}
       {tab === 'horarios' && (<div className="animate-fade-up">
         <div className="card mb-6">
@@ -795,7 +795,7 @@ export default function AdminPage() {
           </div>
         ))}</div>
       </div>)}
-
+ 
       {/* BLOQUEOS */}
       {tab === 'bloques' && (<div className="animate-fade-up">
         <div className="card mb-6">
@@ -853,7 +853,7 @@ export default function AdminPage() {
           )}</div>
         ))}</div>
       </div>)}
-
+ 
       {/* MÉTRICAS */}
       {tab === 'metricas' && (<div className="animate-fade-up">
         <div className="flex gap-2 mb-6">
@@ -894,7 +894,7 @@ export default function AdminPage() {
           </div>
         </div>
       </div>)}
-
+ 
       {/* CLIENTES */}
       {tab === 'clientes' && (<div className="animate-fade-up">
         {!clienteSeleccionado ? (<>
@@ -969,7 +969,7 @@ export default function AdminPage() {
           </div>
         </>) : null}
       </div>)}
-
+ 
       {/* WAITLIST */}
       {tab === 'waitlist' && (<div className="animate-fade-up">
         <p className="text-sm text-[#A89585] mb-4">Clientas anotadas esperando que se libere un turno. Cuando canceles uno, podés avisarles.</p>
@@ -992,7 +992,8 @@ export default function AdminPage() {
           </div>
         ))}</div>)}
       </div>)}
-
+ 
     </div>
   );
 }
+ 
