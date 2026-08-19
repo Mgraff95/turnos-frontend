@@ -25,6 +25,8 @@ export default function ReservarPage() {
   const [turnoConfirmado, setTurnoConfirmado] = useState(null);
   const [reservaMultiple, setReservaMultiple] = useState(null);
   const [horariosLoaded, setHorariosLoaded] = useState(false);
+  const [cotizacion, setCotizacion] = useState(null);
+  const [cotizando, setCotizando] = useState(false);
   // Marca si en algún momento se mostró la pantalla de "aprovechá el rato" (para el progreso)
   const [pasoCompatiblesVisitado, setPasoCompatiblesVisitado] = useState(false);
   // "Foto" de los compatibles a ofrecer, tomada UNA sola vez al salir del Step 1.
@@ -52,6 +54,26 @@ export default function ReservarPage() {
   const esMulti = serviciosSeleccionados.length >= 2;
  
   // Payload de servicios+extras para los endpoints multi
+  // Cuánto tiene que abonar la clienta. Lo calcula el backend: acá nunca se
+  // arma un monto, solo se muestra el que devuelve /api/pagos/cotizar.
+  useEffect(() => {
+    if (step !== 4 || serviciosSeleccionados.length === 0 || telefono.length !== 10) {
+      setCotizacion(null);
+      return;
+    }
+    let cancelado = false;
+    setCotizando(true);
+    api.post('/api/pagos/cotizar', {
+      telefono: telefono.trim(),
+      servicios: buildServiciosPayload(),
+    })
+      .then(res => { if (!cancelado) setCotizacion(res.data); })
+      .catch(() => { if (!cancelado) setCotizacion(null); })
+      .finally(() => { if (!cancelado) setCotizando(false); });
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, telefono, serviciosSeleccionados, extrasElegidos]);
+
   const buildServiciosPayload = () =>
     serviciosSeleccionados.map(s => ({
       servicio_id: s.id,
@@ -882,6 +904,41 @@ export default function ReservarPage() {
             </div>
           </div>
  
+          {/* Qué se abona por adelantado. Solo aparece si Daniela tiene el cobro activado. */}
+          {cotizando && (
+            <div className="card mb-4">
+              <p className="text-sm text-[#8A8580]">Calculando el monto a abonar...</p>
+            </div>
+          )}
+          {!cotizando && cotizacion?.requiere_pago && (
+            <div className="card mb-4 border-2 border-[#F2A7C0]">
+              <p className="font-semibold text-[#E6005C]">💳 Para confirmar tu turno</p>
+              {cotizacion.tipo === 'total' ? (
+                <p className="text-sm text-[#8A8580] mt-1">Para este turno se abona el servicio completo por adelantado.</p>
+              ) : (
+                <p className="text-sm text-[#8A8580] mt-1">Se abona una seña para reservar el horario. El resto lo pagás en el local.</p>
+              )}
+              <div className="mt-3 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-[#3A3A3A]">Abonás ahora</span>
+                  <span className="font-bold text-[#E6005C]">${cotizacion.monto.toLocaleString('es-AR')}</span>
+                </div>
+                {cotizacion.saldo_local > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-[#8A8580]">Resta abonar en el local</span>
+                    <span className="text-sm text-[#8A8580]">${cotizacion.saldo_local.toLocaleString('es-AR')}</span>
+                  </div>
+                )}
+              </div>
+              {cotizacion.hay_precio_variable && (
+                <p className="text-xs text-[#8A8580] mt-2">💡 {cotizacion.nota}</p>
+              )}
+              {cotizacion.texto_checkout && (
+                <p className="text-xs text-[#8A8580] mt-2">{cotizacion.texto_checkout}</p>
+              )}
+            </div>
+          )}
+
           <button onClick={handleSubmit}
             disabled={!nombre || !apellido || telefono.length !== 10 || loading}
             className="btn-primary w-full mt-6">
