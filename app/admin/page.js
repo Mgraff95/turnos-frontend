@@ -53,6 +53,11 @@ export default function AdminPage() {
   const [extras, setExtras] = useState([]);
   const [nuevoExtra, setNuevoExtra] = useState({ nombre: '', descripcion: '', precio_pesos: '', minutos_adicionales: 0, servicios_ids: [], destacado: false, precio_variable: false });
   const [editandoExtra, setEditandoExtra] = useState(null);
+  const [configPago, setConfigPago] = useState(null);
+  const [configPagoForm, setConfigPagoForm] = useState({ sena_monto: '', hold_minutos: '', texto_checkout: '' });
+  const [restricciones, setRestricciones] = useState([]);
+  const [guardandoConfig, setGuardandoConfig] = useState(false);
+  const [motivoRestriccion, setMotivoRestriccion] = useState('');
  
   useEffect(() => { const saved = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
@@ -103,6 +108,7 @@ export default function AdminPage() {
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
   useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);
+  useEffect(() => { if (tab === 'cobros' && token) { loadConfigPago(); loadRestricciones(); } }, [tab, token]);
  
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
@@ -113,10 +119,65 @@ export default function AdminPage() {
   const loadClientes = async () => { try { const res = await api.get('/api/admin/clientes', headers()); setClientes(res.data); } catch (e) {} };
   const loadWaitlist = async () => { try { const res = await api.get('/api/waitlist/admin', headers()); setWaitlistEntries(res.data); } catch (e) {} };
   const loadExtras = async () => { try { const res = await api.get('/api/extras', headers()); setExtras(res.data); } catch (e) {} };
+  const loadConfigPago = async () => { try { const res = await api.get('/api/admin/config-pago', headers()); setConfigPago(res.data); setConfigPagoForm({ sena_monto: String(res.data.sena_monto), hold_minutos: String(res.data.hold_minutos), texto_checkout: res.data.texto_checkout || '' }); } catch (e) { showErr('Error cargando la configuración de cobros'); } };
+  const loadRestricciones = async () => { try { const res = await api.get('/api/admin/restricciones', headers()); setRestricciones(res.data); } catch (e) {} };
  
   const loadFichaCliente = async (telefono) => { setLoadingFicha(true); try { const res = await api.get(`/api/admin/clientes/${telefono}`, headers()); setFichaCliente(res.data); setClienteSeleccionado(telefono); } catch (e) { showErr('Error cargando ficha'); } finally { setLoadingFicha(false); } };
   const handleAgregarNota = async () => { if (!nuevaNota.trim() || !clienteSeleccionado) return; try { await api.post(`/api/admin/clientes/${clienteSeleccionado}/notas`, { texto: nuevaNota }, headers()); setNuevaNota(''); loadFichaCliente(clienteSeleccionado); showMsg('Nota agregada'); } catch (e) { showErr('Error al agregar nota'); } };
   const handleEliminarNota = async (notaId) => { if (!confirm('¿Eliminar esta nota?')) return; try { await api.delete(`/api/admin/clientes/${clienteSeleccionado}/notas/${notaId}`, headers()); loadFichaCliente(clienteSeleccionado); showMsg('Nota eliminada'); } catch (e) { showErr('Error'); } };
+
+  // ── Cobros ───────────────────────────────────
+  const patchConfigPago = async (cambios, msg) => {
+    setGuardandoConfig(true);
+    try {
+      const res = await api.patch('/api/admin/config-pago', cambios, headers());
+      setConfigPago(res.data);
+      setConfigPagoForm({ sena_monto: String(res.data.sena_monto), hold_minutos: String(res.data.hold_minutos), texto_checkout: res.data.texto_checkout || '' });
+      showMsg(msg);
+    } catch (e) {
+      showErr(e.response?.data?.error || 'Error al guardar');
+      loadConfigPago(); // revertir el formulario a lo que quedó guardado
+    } finally { setGuardandoConfig(false); }
+  };
+
+  const handleToggleCobro = async () => {
+    const prendiendo = !configPago.cobro_activo;
+    if (prendiendo && !confirm('Al activar el cobro, las clientas van a tener que pagar para confirmar su turno desde la web. ¿Confirmás?')) return;
+    await patchConfigPago({ cobro_activo: prendiendo }, prendiendo ? 'Cobro activado' : 'Cobro desactivado');
+  };
+
+  const handleGuardarMontos = async () => {
+    await patchConfigPago({
+      sena_monto: parseFloat(configPagoForm.sena_monto),
+      hold_minutos: parseInt(configPagoForm.hold_minutos),
+      texto_checkout: configPagoForm.texto_checkout
+    }, 'Configuración guardada');
+  };
+
+  const handleMarcarPagoTotal = async () => {
+    if (!fichaCliente) return;
+    try {
+      await api.post('/api/admin/restricciones', {
+        telefono: clienteSeleccionado,
+        nombre: fichaCliente.cliente.nombre,
+        apellido: fichaCliente.cliente.apellido,
+        motivo: motivoRestriccion
+      }, headers());
+      setMotivoRestriccion('');
+      loadFichaCliente(clienteSeleccionado);
+      showMsg('La clienta abona el 100% por adelantado');
+    } catch (e) { showErr(e.response?.data?.error || 'Error al marcar'); }
+  };
+
+  const handleQuitarPagoTotal = async (telefono) => {
+    if (!confirm('¿Sacar a esta clienta de la lista de pago total? Vuelve a abonar solo la seña.')) return;
+    try {
+      await api.delete(`/api/admin/restricciones/${telefono}`, headers());
+      if (clienteSeleccionado === telefono) loadFichaCliente(telefono);
+      loadRestricciones();
+      showMsg('Clienta quitada de la lista');
+    } catch (e) { showErr('Error'); }
+  };
   const handleCancelarTurno = async (turno) => {
     if (!confirm(`¿Cancelar el turno de ${turno.cliente_nombre} ${turno.cliente_apellido}?\n\nSe le enviará un WhatsApp avisándole.`)) return;
     try { await api.delete(`/api/admin/turnos/${turno.id}`, headers()); showMsg(`Turno de ${turno.cliente_nombre} cancelado`); setTurnoDetalle(null); loadTurnos(); } catch (err) { showErr(err.response?.data?.error || 'Error al cancelar'); }
@@ -372,7 +433,7 @@ export default function AdminPage() {
       </div>
  
       <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6 flex-wrap">
-        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
+        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'cobros',label:'💳 Cobros'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setClienteSeleccionado(null); setFichaCliente(null); }} className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
       </div>
@@ -943,6 +1004,21 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="card mb-4">
+            <h4 className="font-semibold text-[#8B6F5E] mb-3">💳 Pago por adelantado</h4>
+            {fichaCliente.restriccion ? (<div className="bg-[#FBEAEA] rounded-lg p-3">
+              <p className="text-sm font-medium text-[#C47070]">Abona el 100% del servicio al reservar</p>
+              {fichaCliente.restriccion.motivo && <p className="text-xs text-[#A89585] mt-1">Motivo: {fichaCliente.restriccion.motivo}</p>}
+              <p className="text-xs text-[#A89585] mt-1">Marcada el {format(new Date(fichaCliente.restriccion.updated_at), "d MMM yyyy", {locale: es})}</p>
+              <button onClick={() => handleQuitarPagoTotal(clienteSeleccionado)} className="text-xs text-[#8B6F5E] hover:underline mt-2 cursor-pointer">Quitar de la lista</button>
+            </div>) : (<>
+              <p className="text-sm text-[#A89585] mb-3">Si la marcás, al reservar desde la web va a tener que abonar el servicio completo en lugar de la seña. Canceló el {fichaCliente.stats.tasaCancelacion}% de sus turnos ({fichaCliente.stats.totalCancelados} de {fichaCliente.stats.totalTurnos}).</p>
+              <div className="flex gap-2">
+                <input type="text" value={motivoRestriccion} onChange={e => setMotivoRestriccion(e.target.value)} placeholder="Motivo (opcional): canceló 3 veces seguidas..." className="input-field flex-1" />
+                <button onClick={handleMarcarPagoTotal} className="btn-primary whitespace-nowrap">Marcar</button>
+              </div>
+            </>)}
+          </div>
+          <div className="card mb-4">
             <h4 className="font-semibold text-[#8B6F5E] mb-3">📝 Notas privadas</h4>
             <div className="flex gap-2 mb-4">
               <input type="text" value={nuevaNota} onChange={e => setNuevaNota(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAgregarNota()} placeholder="Ej: Alérgica al esmalte X, prefiere tonos nude..." className="input-field flex-1" />
@@ -970,6 +1046,74 @@ export default function AdminPage() {
         </>) : null}
       </div>)}
  
+      {/* COBROS */}
+      {tab === 'cobros' && (<div className="animate-fade-up">
+        {!configPago ? <p className="text-center text-[#A89585] py-8">Cargando configuración...</p> : (<>
+
+          {/* Estado del cobro: tiene que quedar clarísimo cuando está apagado */}
+          <div className={'card mb-6 border-2 ' + (configPago.cobro_activo ? 'border-[#6B8F6B]' : 'border-[#C47070]')}>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <p className={'font-semibold text-lg ' + (configPago.cobro_activo ? 'text-[#6B8F6B]' : 'text-[#C47070]')}>
+                  {configPago.cobro_activo ? '🟢 Cobro activado' : '🔴 Cobro desactivado'}
+                </p>
+                <p className="text-sm text-[#A89585] mt-1 max-w-xl">
+                  {configPago.cobro_activo
+                    ? 'Las clientas abonan al reservar desde la web. El turno se confirma recién cuando el pago está aprobado.'
+                    : 'Las clientas reservan sin pagar, como siempre. Nada de lo de abajo tiene efecto todavía.'}
+                </p>
+              </div>
+              <button onClick={handleToggleCobro} disabled={guardandoConfig} className="btn-primary whitespace-nowrap">
+                {configPago.cobro_activo ? 'Desactivar cobro' : 'Activar cobro'}
+              </button>
+            </div>
+          </div>
+
+          {/* Montos y tiempos */}
+          <div className="card mb-6">
+            <h4 className="font-semibold text-[#8B6F5E] mb-4">Configuración de cobro</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Monto de la seña</label>
+                <input type="number" min="1" max="200000" step="100" value={configPagoForm.sena_monto} onChange={e => setConfigPagoForm({ ...configPagoForm, sena_monto: e.target.value })} className="input-field" />
+                <p className="text-xs text-[#A89585] mt-1">Monto fijo, una sola seña por reserva.</p>
+              </div>
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Minutos para completar el pago</label>
+                <input type="number" min="5" max="60" value={configPagoForm.hold_minutos} onChange={e => setConfigPagoForm({ ...configPagoForm, hold_minutos: e.target.value })} className="input-field" />
+                <p className="text-xs text-[#A89585] mt-1">Cuánto se le reserva el horario mientras paga. Después se libera solo.</p>
+              </div>
+            </div>
+            <div className="mt-4">
+              <label className="text-xs text-[#A89585] mb-1 block">Texto para la clienta antes de pagar (opcional)</label>
+              <input type="text" value={configPagoForm.texto_checkout} onChange={e => setConfigPagoForm({ ...configPagoForm, texto_checkout: e.target.value })} placeholder="Ej: La seña se descuenta del total al momento del turno." className="input-field" />
+            </div>
+            <button onClick={handleGuardarMontos} disabled={guardandoConfig} className="btn-primary mt-4">
+              {guardandoConfig ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+
+          {/* Clientas con pago total anticipado */}
+          <div className="card">
+            <h4 className="font-semibold text-[#8B6F5E] mb-1">Clientas que abonan el 100% por adelantado</h4>
+            <p className="text-sm text-[#A89585] mb-4">Estas clientas pagan el servicio completo al reservar, en lugar de la seña. Para agregar una, entrá a su ficha desde la pestaña Clientes.</p>
+            {restricciones.length === 0 ? <p className="text-sm text-[#A89585]">No hay ninguna clienta marcada.</p> : (<div className="space-y-2">{restricciones.map(r => (
+              <div key={r.id} className="flex items-start justify-between bg-[#F5F0EB] rounded-lg p-3 gap-3">
+                <div>
+                  <p className="text-sm font-medium">{r.cliente_nombre || '(sin nombre)'} {r.cliente_apellido || ''}</p>
+                  <p className="text-xs text-[#A89585]">{r.cliente_telefono}</p>
+                  {r.motivo && <p className="text-xs text-[#A89585] mt-1">Motivo: {r.motivo}</p>}
+                </div>
+                <div className="text-right whitespace-nowrap">
+                  <p className="text-xs text-[#A89585]">{format(new Date(r.updated_at), "d MMM yyyy", {locale: es})}</p>
+                  <button onClick={() => handleQuitarPagoTotal(r.cliente_telefono)} className="text-xs text-[#C47070] hover:underline cursor-pointer mt-1">Quitar</button>
+                </div>
+              </div>
+            ))}</div>)}
+          </div>
+        </>)}
+      </div>)}
+
       {/* WAITLIST */}
       {tab === 'waitlist' && (<div className="animate-fade-up">
         <p className="text-sm text-[#A89585] mb-4">Clientas anotadas esperando que se libere un turno. Cuando canceles uno, podés avisarles.</p>
