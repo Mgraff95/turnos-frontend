@@ -345,6 +345,26 @@ export default function ReservarPage() {
     setError('');
     setLoading(true);
     try {
+      // Si Daniela tiene el cobro activado, el turno NO se crea acá: se crea
+      // cuando Mercado Pago confirma el pago. Acá solo se congela el horario y
+      // se redirige al checkout.
+      if (cotizacion?.requiere_pago) {
+        const res = await api.post('/api/pagos/checkout', {
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          telefono: telefono.trim(),
+          fecha: fechaSeleccionada,
+          hora_inicio: horaSeleccionada,
+          servicios: buildServiciosPayload(),
+        });
+        if (res.data?.init_point) {
+          window.location.href = res.data.init_point;
+          return;
+        }
+        // requiere_pago false = a Daniela se le apagó el cobro entre la
+        // cotización y el click. Se sigue por el flujo de siempre.
+      }
+
       if (serviciosSeleccionados.length === 1) {
         const s = serviciosSeleccionados[0];
         const res = await api.post('/api/turnos', {
@@ -942,8 +962,16 @@ export default function ReservarPage() {
           <button onClick={handleSubmit}
             disabled={!nombre || !apellido || telefono.length !== 10 || loading}
             className="btn-primary w-full mt-6">
-            {loading ? 'Reservando...' : (esMulti ? 'Confirmar reserva' : 'Confirmar reserva')}
+            {loading
+              ? (cotizacion?.requiere_pago ? 'Abriendo el pago...' : 'Reservando...')
+              : (cotizacion?.requiere_pago ? 'Pagar y confirmar turno' : 'Confirmar reserva')}
           </button>
+          {cotizacion?.requiere_pago && (
+            <p className="text-xs text-[#8A8580] text-center mt-3">
+              Te vamos a llevar a Mercado Pago. Tenés {cotizacion.hold_minutos || 12} minutos para completar el pago:
+              pasado ese tiempo el horario vuelve a quedar disponible.
+            </p>
+          )}
         </div>
       )}
     </div>
