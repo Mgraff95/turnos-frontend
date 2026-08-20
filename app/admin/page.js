@@ -58,6 +58,11 @@ export default function AdminPage() {
   const [restricciones, setRestricciones] = useState([]);
   const [guardandoConfig, setGuardandoConfig] = useState(false);
   const [motivoRestriccion, setMotivoRestriccion] = useState('');
+  const [pagos, setPagos] = useState([]);
+  const [paginaPagos, setPaginaPagos] = useState(1);
+  const [paginasPagos, setPaginasPagos] = useState(1);
+  const [filtroPagos, setFiltroPagos] = useState({ desde: '', hasta: '', estado: '', telefono: '' });
+  const [reservasPendientes, setReservasPendientes] = useState([]);
  
   useEffect(() => { const saved = typeof window !== 'undefined' ? localStorage.getItem('admin_token') : null; if (saved) setToken(saved); }, []);
   useEffect(() => { if (token) loadAll(); }, [token]);
@@ -108,7 +113,11 @@ export default function AdminPage() {
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
   useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);
-  useEffect(() => { if (tab === 'cobros' && token) { loadConfigPago(); loadRestricciones(); } }, [tab, token]);
+  useEffect(() => { if (tab === 'cobros' && token) { loadConfigPago(); loadRestricciones(); loadReservasPendientes(); } }, [tab, token]);
+  useEffect(() => { if (tab === 'cobros' && token) loadPagos(); }, [tab, token, paginaPagos, filtroPagos]);
+  // Al cambiar un filtro se vuelve a la primera página, si no queda mostrando vacío.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPaginaPagos(1); }, [filtroPagos]);
  
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
   const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
@@ -121,6 +130,17 @@ export default function AdminPage() {
   const loadExtras = async () => { try { const res = await api.get('/api/extras', headers()); setExtras(res.data); } catch (e) {} };
   const loadConfigPago = async () => { try { const res = await api.get('/api/admin/config-pago', headers()); setConfigPago(res.data); setConfigPagoForm({ sena_monto: String(res.data.sena_monto), hold_minutos: String(res.data.hold_minutos), texto_checkout: res.data.texto_checkout || '' }); } catch (e) { showErr('Error cargando la configuración de cobros'); } };
   const loadRestricciones = async () => { try { const res = await api.get('/api/admin/restricciones', headers()); setRestricciones(res.data); } catch (e) {} };
+  const loadPagos = async () => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filtroPagos).forEach(([k, v]) => { if (v) params.set(k, v); });
+      params.set('pagina', String(paginaPagos));
+      const res = await api.get(`/api/admin/pagos?${params.toString()}`, headers());
+      setPagos(res.data.pagos || []);
+      setPaginasPagos(res.data.paginas || 1);
+    } catch (e) { setPagos([]); }
+  };
+  const loadReservasPendientes = async () => { try { const res = await api.get('/api/admin/reservas-pendientes', headers()); setReservasPendientes(res.data); } catch (e) { setReservasPendientes([]); } };
  
   const loadFichaCliente = async (telefono) => { setLoadingFicha(true); try { const res = await api.get(`/api/admin/clientes/${telefono}`, headers()); setFichaCliente(res.data); setClienteSeleccionado(telefono); } catch (e) { showErr('Error cargando ficha'); } finally { setLoadingFicha(false); } };
   const handleAgregarNota = async () => { if (!nuevaNota.trim() || !clienteSeleccionado) return; try { await api.post(`/api/admin/clientes/${clienteSeleccionado}/notas`, { texto: nuevaNota }, headers()); setNuevaNota(''); loadFichaCliente(clienteSeleccionado); showMsg('Nota agregada'); } catch (e) { showErr('Error al agregar nota'); } };
@@ -167,6 +187,17 @@ export default function AdminPage() {
       loadFichaCliente(clienteSeleccionado);
       showMsg('La clienta abona el 100% por adelantado');
     } catch (e) { showErr(e.response?.data?.error || 'Error al marcar'); }
+  };
+
+  const handleReembolsar = async (pago) => {
+    const quien = pago.turnos[0]?.cliente || pago.cliente_telefono;
+    if (!confirm(`¿Reembolsar $${pago.monto.toLocaleString('es-AR')} a ${quien}?`)) return;
+    if (!confirm('Esta acción devuelve el dinero por Mercado Pago y NO se puede deshacer. ¿Confirmás?')) return;
+    try {
+      await api.post(`/api/admin/pagos/${pago.id}/reembolsar`, {}, headers());
+      showMsg('Reembolso realizado');
+      loadPagos();
+    } catch (e) { showErr(e.response?.data?.error || 'Error al reembolsar'); }
   };
 
   const handleQuitarPagoTotal = async (telefono) => {
@@ -1110,6 +1141,109 @@ export default function AdminPage() {
                 </div>
               </div>
             ))}</div>)}
+          </div>
+          {/* Holds activos: pagos en curso que están ocupando un horario */}
+          {reservasPendientes.length > 0 && (
+            <div className="card mt-6 border-2 border-[#E8B84B]">
+              <h4 className="font-semibold text-[#8B6F5E] mb-1">⏳ Pagos en curso ({reservasPendientes.length})</h4>
+              <p className="text-sm text-[#A89585] mb-3">
+                Estas clientas están pagando ahora. Su horario está reservado hasta que termine el tiempo;
+                si no completan el pago, se libera solo.
+              </p>
+              <div className="space-y-2">{reservasPendientes.map(r => (
+                <div key={r.id} className="flex items-center justify-between bg-[#F5F0EB] rounded-lg p-3 gap-3">
+                  <div>
+                    <p className="text-sm font-medium">{r.cliente_nombre} {r.cliente_apellido}</p>
+                    <p className="text-xs text-[#A89585]">
+                      {format(fechaLocal(r.fecha), "EEE d MMM", {locale: es})} · {r.hora_inicio} a {r.hora_fin} hs · {r.cliente_telefono}
+                    </p>
+                  </div>
+                  <div className="text-right whitespace-nowrap">
+                    <p className="text-sm font-bold text-[#8B6F5E]">${r.monto.toLocaleString('es-AR')}</p>
+                    <p className="text-xs text-[#A89585]">vence {format(new Date(r.expira_at), "HH:mm")}</p>
+                  </div>
+                </div>
+              ))}</div>
+            </div>
+          )}
+
+          {/* Historial de pagos */}
+          <div className="card mt-6">
+            <h4 className="font-semibold text-[#8B6F5E] mb-3">💰 Pagos recibidos</h4>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Desde</label>
+                <input type="date" value={filtroPagos.desde} onChange={e => setFiltroPagos({ ...filtroPagos, desde: e.target.value })} className="input-field" />
+              </div>
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Hasta</label>
+                <input type="date" value={filtroPagos.hasta} onChange={e => setFiltroPagos({ ...filtroPagos, hasta: e.target.value })} className="input-field" />
+              </div>
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Estado</label>
+                <select value={filtroPagos.estado} onChange={e => setFiltroPagos({ ...filtroPagos, estado: e.target.value })} className="input-field">
+                  <option value="">Todos</option>
+                  <option value="approved">Aprobados</option>
+                  <option value="refunded">Reembolsados</option>
+                  <option value="rejected">Rechazados</option>
+                  <option value="cancelled">Cancelados</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-[#A89585] mb-1 block">Teléfono</label>
+                <input type="text" value={filtroPagos.telefono} onChange={e => setFiltroPagos({ ...filtroPagos, telefono: e.target.value })} placeholder="1123456789" className="input-field" />
+              </div>
+            </div>
+
+            {pagos.length === 0 ? (
+              <p className="text-sm text-[#A89585]">No hay pagos registrados con esos filtros.</p>
+            ) : (<div className="space-y-2">{pagos.map(p => (
+              <div key={p.id} className="bg-[#F5F0EB] rounded-lg p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">
+                      {p.turnos[0]?.cliente || p.cliente_telefono}
+                      <span className={'ml-2 text-xs px-2 py-0.5 rounded-full ' + (
+                        p.estado === 'approved' ? 'bg-[#E8F5E8] text-[#6B8F6B]'
+                          : p.estado === 'refunded' ? 'bg-[#FFF3E0] text-[#B8860B]'
+                          : 'bg-[#FBEAEA] text-[#C47070]')}>
+                        {p.estado}
+                      </span>
+                      <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-white text-[#8B6F5E]">
+                        {p.tipo === 'total' ? 'pago total' : 'seña'}
+                      </span>
+                    </p>
+                    <p className="text-xs text-[#A89585] mt-0.5">
+                      {format(new Date(p.created_at), "d MMM yyyy HH:mm", {locale: es})} · {p.cliente_telefono}
+                      {p.metodo ? ' · ' + p.metodo : ''}
+                    </p>
+                    {p.turnos.map(t => (
+                      <p key={t.id} className="text-xs text-[#8B6F5E] mt-0.5">
+                        {t.servicio}{t.fecha ? ' · ' + format(fechaLocal(t.fecha), "d MMM", {locale: es}) + ' ' + t.hora_inicio + ' hs' : ''}
+                        {t.estado === 'cancelado' && <span className="text-[#C47070]"> (turno cancelado)</span>}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="text-right whitespace-nowrap">
+                    <p className="text-sm font-bold text-[#8B6F5E]">${p.monto.toLocaleString('es-AR')}</p>
+                    {p.estado === 'approved' && (
+                      <button onClick={() => handleReembolsar(p)} className="text-xs text-[#C47070] hover:underline cursor-pointer mt-1">
+                        Reembolsar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}</div>)}
+
+            {paginasPagos > 1 && (
+              <div className="flex items-center justify-center gap-3 mt-4">
+                <button disabled={paginaPagos <= 1} onClick={() => setPaginaPagos(paginaPagos - 1)} className="text-sm text-[#8B6F5E] disabled:text-[#D6CFC7] cursor-pointer">‹ Anterior</button>
+                <span className="text-xs text-[#A89585]">{paginaPagos} de {paginasPagos}</span>
+                <button disabled={paginaPagos >= paginasPagos} onClick={() => setPaginaPagos(paginaPagos + 1)} className="text-sm text-[#8B6F5E] disabled:text-[#D6CFC7] cursor-pointer">Siguiente ›</button>
+              </div>
+            )}
           </div>
         </>)}
       </div>)}
