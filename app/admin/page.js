@@ -338,8 +338,11 @@ export default function AdminPage() {
     } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
   };
  
+  // Los turnos anteriores a esta fecha son pruebas del sistema y no cuentan en Métricas.
+  const INICIO_METRICAS = '2026-07-01';
+  const turnosMetricas = turnos.filter(t => String(t.fecha).split('T')[0] >= INICIO_METRICAS);
   const filtrarPorPeriodo = useCallback((items) => { const ahora = new Date(); return items.filter(t => { const fecha = fechaLocal(t.fecha); if (periodoMetricas === 'semana') { const hace7 = new Date(ahora); hace7.setDate(hace7.getDate() - 7); return fecha >= hace7; } if (periodoMetricas === 'mes') { return fecha.getMonth() === ahora.getMonth() && fecha.getFullYear() === ahora.getFullYear(); } return true; }); }, [periodoMetricas]);
-  const turnosFiltrados = filtrarPorPeriodo(turnos);
+  const turnosFiltrados = filtrarPorPeriodo(turnosMetricas);
   const confirmadosFiltrados = turnosFiltrados.filter(t => t.estado === 'confirmado');
   const canceladosFiltrados = turnosFiltrados.filter(t => t.estado === 'cancelado');
   const tasaCancelacion = turnosFiltrados.length > 0 ? ((canceladosFiltrados.length / turnosFiltrados.length) * 100).toFixed(1) : 0;
@@ -348,7 +351,7 @@ export default function AdminPage() {
   // ── Ingresos mes a mes (histórico completo, NO depende del filtro de período) ──
   const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   const hoyM = new Date(); const claveMesActual = `${hoyM.getFullYear()}-${String(hoyM.getMonth() + 1).padStart(2, '0')}`;
-  const mesesMap = {}; turnos.filter(t => t.estado === 'confirmado').forEach(t => { const f = fechaLocal(t.fecha); const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`; if (!mesesMap[clave]) mesesMap[clave] = { clave, label: `${mesesNombres[f.getMonth()]} ${String(f.getFullYear()).slice(2)}`, total: 0, cantidad: 0 }; mesesMap[clave].total += precioTurno(t); mesesMap[clave].cantidad++; });
+  const mesesMap = {}; turnosMetricas.filter(t => t.estado === 'confirmado').forEach(t => { const f = fechaLocal(t.fecha); const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`; if (!mesesMap[clave]) mesesMap[clave] = { clave, label: `${mesesNombres[f.getMonth()]} ${String(f.getFullYear()).slice(2)}`, total: 0, cantidad: 0 }; mesesMap[clave].total += precioTurno(t); mesesMap[clave].cantidad++; });
   const mesesTodos = Object.values(mesesMap).sort((a, b) => a.clave.localeCompare(b.clave));
   const mesesHistoricos = mesesTodos.filter(m => m.clave <= claveMesActual);
   const mesesFuturos = mesesTodos.filter(m => m.clave > claveMesActual);
@@ -964,11 +967,12 @@ export default function AdminPage() {
  
       {/* MÉTRICAS */}
       {tab === 'metricas' && (<div className="animate-fade-up">
-        <div className="flex gap-2 mb-6">
+        <div className="flex gap-2 mb-2">
           {[{id:'semana',label:'Última semana'},{id:'mes',label:'Este mes'},{id:'todo',label:'Todo'}].map(p => (
             <button key={p.id} onClick={() => setPeriodoMetricas(p.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${periodoMetricas === p.id ? 'bg-[#8B6F5E] text-white' : 'bg-[#F5F0EB] text-[#8B6F5E]'}`}>{p.label}</button>
           ))}
         </div>
+        <p className="text-xs text-[#A89585] mb-6">Las métricas cuentan desde julio 2026. Los turnos anteriores eran pruebas del sistema y quedan afuera.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           <div className="card text-center"><p className="text-2xl font-bold text-[#6B8F6B]">{confirmadosFiltrados.length}</p><p className="text-xs text-[#A89585]">Confirmados</p></div>
           <div className="card text-center"><p className="text-2xl font-bold text-[#C47070]">{canceladosFiltrados.length}</p><p className="text-xs text-[#A89585]">Cancelados</p></div>
