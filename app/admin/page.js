@@ -343,7 +343,23 @@ export default function AdminPage() {
   const confirmadosFiltrados = turnosFiltrados.filter(t => t.estado === 'confirmado');
   const canceladosFiltrados = turnosFiltrados.filter(t => t.estado === 'cancelado');
   const tasaCancelacion = turnosFiltrados.length > 0 ? ((canceladosFiltrados.length / turnosFiltrados.length) * 100).toFixed(1) : 0;
-  const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => { const s = servicios.find(s => s.id === t.servicio_id); return sum + (s ? parseFloat(s.precio_pesos) : 0); }, 0);
+  const precioTurno = (t) => { const sv = t.servicio || servicios.find(s => s.id === t.servicio_id); const base = sv ? parseFloat(sv.precio_pesos) : 0; const ext = (t.extras || []).reduce((a, e) => a + (parseFloat(e.precio_pesos) || 0), 0); return (isNaN(base) ? 0 : base) + ext; };
+  const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => sum + precioTurno(t), 0);
+  // ── Ingresos mes a mes (histórico completo, NO depende del filtro de período) ──
+  const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const hoyM = new Date(); const claveMesActual = `${hoyM.getFullYear()}-${String(hoyM.getMonth() + 1).padStart(2, '0')}`;
+  const mesesMap = {}; turnos.filter(t => t.estado === 'confirmado').forEach(t => { const f = fechaLocal(t.fecha); const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`; if (!mesesMap[clave]) mesesMap[clave] = { clave, label: `${mesesNombres[f.getMonth()]} ${String(f.getFullYear()).slice(2)}`, total: 0, cantidad: 0 }; mesesMap[clave].total += precioTurno(t); mesesMap[clave].cantidad++; });
+  const mesesTodos = Object.values(mesesMap).sort((a, b) => a.clave.localeCompare(b.clave));
+  const mesesHistoricos = mesesTodos.filter(m => m.clave <= claveMesActual);
+  const mesesFuturos = mesesTodos.filter(m => m.clave > claveMesActual);
+  const mesesCerrados = mesesHistoricos.filter(m => m.clave !== claveMesActual);
+  const baseParaPromedio = mesesCerrados.length > 0 ? mesesCerrados : mesesHistoricos;
+  const promedioMensual = baseParaPromedio.length > 0 ? baseParaPromedio.reduce((s, m) => s + m.total, 0) / baseParaPromedio.length : 0;
+  const mesesGrafico = mesesHistoricos.slice(-12);
+  const maxMes = Math.max(...mesesGrafico.map(m => m.total), 1);
+  const mejorMes = mesesHistoricos.length > 0 ? mesesHistoricos.reduce((a, b) => (b.total > a.total ? b : a)) : null;
+  const totalHistorico = mesesHistoricos.reduce((s, m) => s + m.total, 0);
+  const agendadoFuturo = mesesFuturos.reduce((s, m) => s + m.total, 0);
   const servicioCount = {}; confirmadosFiltrados.forEach(t => { const s = servicios.find(s => s.id === t.servicio_id); servicioCount[s ? s.nombre : '?'] = (servicioCount[s ? s.nombre : '?'] || 0) + 1; });
   const topServicios = Object.entries(servicioCount).sort((a, b) => b[1] - a[1]).slice(0, 5); const maxServicio = topServicios[0]?.[1] || 1;
   const diasNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const turnosPorDia = Array(7).fill(0); confirmadosFiltrados.forEach(t => { turnosPorDia[fechaLocal(t.fecha).getDay()]++; }); const maxDia = Math.max(...turnosPorDia, 1);
@@ -957,7 +973,45 @@ export default function AdminPage() {
           <div className="card text-center"><p className="text-2xl font-bold text-[#6B8F6B]">{confirmadosFiltrados.length}</p><p className="text-xs text-[#A89585]">Confirmados</p></div>
           <div className="card text-center"><p className="text-2xl font-bold text-[#C47070]">{canceladosFiltrados.length}</p><p className="text-xs text-[#A89585]">Cancelados</p></div>
           <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">{tasaCancelacion}%</p><p className="text-xs text-[#A89585]">Tasa cancelación</p></div>
-          <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">${ingresoEstimado.toLocaleString('es-AR')}</p><p className="text-xs text-[#A89585]">Ingreso estimado</p></div>
+          <div className="card text-center"><p className="text-2xl font-bold text-[#8B6F5E]">${Math.round(ingresoEstimado).toLocaleString('es-AR')}</p><p className="text-xs text-[#A89585]">Ingreso estimado</p></div>
+        </div>
+        <div className="card mb-6">
+          <div className="flex items-start justify-between flex-wrap gap-2 mb-4">
+            <h4 className="font-semibold text-[#8B6F5E]">📈 Ingresos por mes</h4>
+            <span className="text-xs text-[#A89585]">Histórico completo · no depende del filtro de arriba</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <div className="text-center bg-[#F5F0EB] rounded-lg p-3">
+              <p className="text-xl font-bold text-[#8B6F5E]">${Math.round(promedioMensual).toLocaleString('es-AR')}</p>
+              <p className="text-xs text-[#A89585]">Promedio mensual</p>
+              <p className="text-[10px] text-[#A89585] mt-0.5">{baseParaPromedio.length} {baseParaPromedio.length === 1 ? 'mes' : 'meses'}{mesesCerrados.length > 0 ? ' cerrados' : ' (en curso)'}</p>
+            </div>
+            <div className="text-center bg-[#F5F0EB] rounded-lg p-3">
+              <p className="text-xl font-bold text-[#6B8F6B]">${mejorMes ? Math.round(mejorMes.total).toLocaleString('es-AR') : '0'}</p>
+              <p className="text-xs text-[#A89585]">Mejor mes</p>
+              <p className="text-[10px] text-[#A89585] mt-0.5">{mejorMes ? mejorMes.label : '—'}</p>
+            </div>
+            <div className="text-center bg-[#F5F0EB] rounded-lg p-3">
+              <p className="text-xl font-bold text-[#8B6F5E]">${Math.round(totalHistorico).toLocaleString('es-AR')}</p>
+              <p className="text-xs text-[#A89585]">Total histórico</p>
+              <p className="text-[10px] text-[#A89585] mt-0.5">{mesesHistoricos.length} {mesesHistoricos.length === 1 ? 'mes' : 'meses'} con turnos</p>
+            </div>
+            <div className="text-center bg-[#F5F0EB] rounded-lg p-3">
+              <p className="text-xl font-bold text-[#D4A843]">${Math.round(agendadoFuturo).toLocaleString('es-AR')}</p>
+              <p className="text-xs text-[#A89585]">Ya agendado</p>
+              <p className="text-[10px] text-[#A89585] mt-0.5">meses próximos</p>
+            </div>
+          </div>
+          {mesesGrafico.length === 0 ? <p className="text-sm text-[#A89585]">Sin datos</p> : <div className="space-y-3">{mesesGrafico.map(m => (
+            <div key={m.clave}>
+              <div className="flex justify-between items-center text-sm mb-1 gap-2">
+                <span>{m.label}{m.clave === claveMesActual && <span className="ml-2 text-[10px] text-[#D4A843] font-medium">en curso</span>}</span>
+                <span className="text-[#A89585] text-xs whitespace-nowrap">${Math.round(m.total).toLocaleString('es-AR')} · {m.cantidad} turno{m.cantidad === 1 ? '' : 's'}</span>
+              </div>
+              <div className="h-2 bg-[#F5F0EB] rounded-full overflow-hidden"><div className={`h-full rounded-full ${m.clave === claveMesActual ? 'bg-[#D4A843]' : 'bg-[#8B6F5E]'}`} style={{width: `${(m.total / maxMes) * 100}%`}} /></div>
+            </div>
+          ))}</div>}
+          <p className="text-[11px] text-[#A89585] mt-4 leading-relaxed">Calculado sobre turnos confirmados con la lista de precios actual (servicio + extras). Los meses pasados se valorizan a precio de hoy.</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div className="card">
