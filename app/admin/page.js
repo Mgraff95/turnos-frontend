@@ -378,10 +378,9 @@ export default function AdminPage() {
   const canceladosFiltrados = turnosFiltrados.filter(t => t.estado === 'cancelado');
   const tasaCancelacion = turnosFiltrados.length > 0 ? ((canceladosFiltrados.length / turnosFiltrados.length) * 100).toFixed(1) : 0;
   const precioTurno = (t) => { const sv = t.servicio || servicios.find(s => s.id === t.servicio_id); const base = sv ? parseFloat(sv.precio_pesos) : 0; const ext = (t.extras || []).reduce((a, e) => a + (parseFloat(e.precio_pesos) || 0), 0); return (isNaN(base) ? 0 : base) + ext; };
-  const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => sum + precioTurno(t), 0);
-  // ── Ingresos mes a mes (histórico completo, NO depende del filtro de período) ──
-  const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  const hoyM = new Date(); const claveMesActual = `${hoyM.getFullYear()}-${String(hoyM.getMonth() + 1).padStart(2, '0')}`;
+  // ingresoEstudio y no precioTurno: si no, esta tarjeta mostraba la facturacion
+  // de las otras profesionales como si fuera del estudio, y contradecia al
+  // grafico de "Ingresos por mes" que esta justo abajo.
   // Lo que entra al estudio por un turno.
   //
   // Si la profesional no tiene comision por defecto, es la dueña: entra todo.
@@ -394,12 +393,25 @@ export default function AdminPage() {
   //
   // El || 0 evita que un turno sin comision_monto propague un NaN y rompa el
   // grafico entero.
-  const ingresoEstudio = (t) =>
-    t.profesional?.comision_pct_default == null
-      ? precioTurno(t)
-      : (Number(t.comision_monto) || 0);
+  const ingresoEstudio = (t) => {
+    if (t.profesional?.comision_pct_default == null) return precioTurno(t);
+    // Un turno de una profesional con comision pero SIN comision registrada es
+    // un turno anterior a que esa comision existiera: su plata fue del estudio.
+    // Caer al precio y no a 0 evita que cargarle un porcentaje a la dueña del
+    // estudio ponga en cero todo el historico del grafico.
+    //
+    // La liquidacion hace lo contrario a proposito (los deja afuera y los
+    // informa aparte): son dos preguntas distintas. Aca es "cuanto entro al
+    // estudio"; alla es "cuanto se le puede cobrar a ella".
+    if (t.comision_monto === null || t.comision_monto === undefined) return precioTurno(t);
+    return Number(t.comision_monto) || 0;
+  };
 
-  // Volumen que paso por el estudio pero NO es plata del estudio.
+  const ingresoEstimado = confirmadosFiltrados.reduce((sum, t) => sum + ingresoEstudio(t), 0);
+  // ── Ingresos mes a mes (histórico completo, NO depende del filtro de período) ──
+  const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const hoyM = new Date(); const claveMesActual = `${hoyM.getFullYear()}-${String(hoyM.getMonth() + 1).padStart(2, '0')}`;
+// Volumen que paso por el estudio pero NO es plata del estudio.
   const facturadoPorTerceras = turnosMetricas
     .filter(t => t.estado === 'confirmado')
     .filter(t => t.profesional?.comision_pct_default != null)
@@ -545,7 +557,7 @@ export default function AdminPage() {
           <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={editandoTurno.telefono} onChange={e => setEditandoTurno({...editandoTurno, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => setEditandoTurno({...editandoTurno, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div>
+          <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => setEditandoTurno({...editandoTurno, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.filter(s => s.activo && (!editandoTurno.profesional_id || s.profesional_id === editandoTurno.profesional_id)).map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div>
           <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={editandoTurno.fecha} onChange={e => setEditandoTurno({...editandoTurno, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div>
           <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={editandoTurno.hora_inicio} onChange={e => setEditandoTurno({...editandoTurno, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{opcionesHoraEdit.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio}{h.hora_fin ? ` - ${h.hora_fin}` : ''}</option>)}</select>{editandoTurno.fecha && editandoTurno.servicio_id && opcionesHoraEdit.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div>
         </div>
