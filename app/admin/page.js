@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '@/lib/api';
 import { format, startOfWeek, addDays, addWeeks } from 'date-fns';
 import { es } from 'date-fns/locale';
+import EquipoTab from './EquipoTab';
  
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
  
@@ -17,15 +18,21 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState('');
   const [turnos, setTurnos] = useState([]);
   const [servicios, setServicios] = useState([]);
+  const [profesionales, setProfesionales] = useState([]);
+  // Agenda que se esta viendo/editando en la pestana Horarios.
+  const [profHorarios, setProfHorarios] = useState(null);
+  // Filtro de agenda en la pestana Turnos. null = ver las dos.
+  const [filtroProfesional, setFiltroProfesional] = useState(null);
   const [horarios, setHorarios] = useState([]);
   const [bloques, setBloques] = useState([]);
   const [tab, setTab] = useState('turnos');
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
-  const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', duracion_minutos: 30, precio_pesos: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' });
+  const SERVICIO_VACIO = { nombre: '', duracion_minutos: 30, precio_pesos: '', profesional_id: '', comision_pct: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' };
+  const [nuevoServicio, setNuevoServicio] = useState(SERVICIO_VACIO);
   const [editandoServicio, setEditandoServicio] = useState(null);
-  const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
+  const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '', profesional_id: '' });
   const [editandoBloque, setEditandoBloque] = useState(null);
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
@@ -120,9 +127,18 @@ export default function AdminPage() {
   useEffect(() => { setPaginaPagos(1); }, [filtroPagos]);
  
   const headers = () => ({ headers: { Authorization: `Bearer ${token}` } });
-  const loadAll = () => { loadTurnos(); loadServicios(); loadHorarios(); loadBloques(); };
+  const loadAll = () => { loadTurnos(); loadServicios(); loadProfesionales(); loadHorarios(); loadBloques(); };
+  // Del endpoint /admin: trae comision_pct_default, que el listado publico no expone.
+  const loadProfesionales = async () => {
+    try {
+      const res = await api.get('/api/profesionales/admin', headers());
+      setProfesionales(res.data);
+      // La primera activa es la agenda por defecto de la pestana Horarios.
+      setProfHorarios(prev => prev ?? res.data.find(p => p.activo)?.id ?? null);
+    } catch (e) {}
+  };
   const loadTurnos = async () => { try { const res = await api.get('/api/admin/turnos', headers()); setTurnos(res.data); } catch (err) { if (err.response?.status === 401) handleLogout(); } };
-  const loadServicios = async () => { try { const res = await api.get('/api/servicios'); setServicios(res.data); } catch (e) {} };
+  const loadServicios = async () => { try { const res = await api.get('/api/servicios/admin', headers()); setServicios(res.data); } catch (e) {} };
   const loadHorarios = async () => { try { const res = await api.get('/api/horarios'); setHorarios(res.data); } catch (e) {} };
   const loadBloques = async () => { try { const res = await api.get('/api/horarios/bloques-cerrados'); setBloques(res.data); } catch (e) {} };
   const loadClientes = async () => { try { const res = await api.get('/api/admin/clientes', headers()); setClientes(res.data); } catch (e) {} };
@@ -241,11 +257,24 @@ export default function AdminPage() {
   const handleLogin = async (e) => { e.preventDefault(); setLoginError(''); setLoading(true); try { const res = await api.post('/api/admin/login', { email, password }); setToken(res.data.token); localStorage.setItem('admin_token', res.data.token); } catch (err) { setLoginError(err.response?.data?.error || 'Error al iniciar sesión'); } finally { setLoading(false); } };
   const handleLogout = () => { setToken(null); localStorage.removeItem('admin_token'); };
  
-  const handleCrearServicio = async (e) => { e.preventDefault(); try { await api.post('/api/servicios', nuevoServicio, headers()); setNuevoServicio({ nombre: '', duracion_minutos: 30, precio_pesos: '', incluye_nota: false, nota: '' }); showMsg('Servicio creado'); loadServicios(); } catch (err) { showErr(err.response?.data?.error || 'Error'); } };
+  const handleCrearServicio = async (e) => {
+    e.preventDefault();
+    if (!nuevoServicio.profesional_id) { showErr('Elegí de qué profesional es el servicio'); return; }
+    try {
+      await api.post('/api/servicios', {
+        ...nuevoServicio,
+        profesional_id: parseInt(nuevoServicio.profesional_id),
+        comision_pct: nuevoServicio.comision_pct === '' ? null : parseFloat(nuevoServicio.comision_pct)
+      }, headers());
+      setNuevoServicio(SERVICIO_VACIO);
+      showMsg('Servicio creado');
+      loadServicios();
+    } catch (err) { showErr(err.response?.data?.error || 'Error'); }
+  };
   const handleDesactivarServicio = async (id) => { if (!confirm('¿Desactivar este servicio? Ya no aparecerá para reservas.')) return; try { await api.patch(`/api/servicios/${id}`, { activo: false }, headers()); showMsg('Servicio desactivado'); loadServicios(); } catch (err) { showErr('Error al desactivar'); } };
-  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
+  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), profesional_id: parseInt(editandoServicio.profesional_id), comision_pct: editandoServicio.comision_pct === '' || editandoServicio.comision_pct === null || editandoServicio.comision_pct === undefined ? null : parseFloat(editandoServicio.comision_pct), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
  
-  const handleCrearRango = async (e) => { e.preventDefault(); try { await api.post('/api/horarios', nuevoRango, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
+  const handleCrearRango = async (e) => { e.preventDefault(); if (!profHorarios) { showErr('Elegí una profesional'); return; } try { await api.post('/api/horarios', { ...nuevoRango, profesional_id: profHorarios }, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEliminarRango = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api.delete(`/api/horarios/${id}`, headers()); showMsg('Eliminado'); loadHorarios(); } catch (err) { showErr('Error'); } };
  
@@ -256,10 +285,12 @@ export default function AdminPage() {
         fecha: nuevoBloque.fecha,
         motivo: nuevoBloque.motivo,
         hora_inicio: nuevoBloque.todoElDia ? '' : nuevoBloque.hora_inicio,
-        hora_fin: nuevoBloque.todoElDia ? '' : nuevoBloque.hora_fin
+        hora_fin: nuevoBloque.todoElDia ? '' : nuevoBloque.hora_fin,
+        // '' = todo el estudio (null en la base). Con valor, cierra solo esa agenda.
+        profesional_id: nuevoBloque.profesional_id || ''
       };
       await api.post('/api/horarios/bloques-cerrados', payload, headers());
-      setNuevoBloque({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '' });
+      setNuevoBloque({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '', profesional_id: '' });
       showMsg('Bloqueo agregado');
       loadBloques();
     } catch (err) { showErr(err.response?.data?.error || 'Error'); }
@@ -351,7 +382,30 @@ export default function AdminPage() {
   // ── Ingresos mes a mes (histórico completo, NO depende del filtro de período) ──
   const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   const hoyM = new Date(); const claveMesActual = `${hoyM.getFullYear()}-${String(hoyM.getMonth() + 1).padStart(2, '0')}`;
-  const mesesMap = {}; turnosMetricas.filter(t => t.estado === 'confirmado').forEach(t => { const f = fechaLocal(t.fecha); const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`; if (!mesesMap[clave]) mesesMap[clave] = { clave, label: `${mesesNombres[f.getMonth()]} ${String(f.getFullYear()).slice(2)}`, total: 0, cantidad: 0 }; mesesMap[clave].total += precioTurno(t); mesesMap[clave].cantidad++; });
+  // Lo que entra al estudio por un turno.
+  //
+  // Si la profesional no tiene comision por defecto, es la dueña: entra todo.
+  // Si la tiene, ella le cobro a la clienta y al estudio solo le corresponde la
+  // comision.
+  //
+  // El historico NO se mueve: los turnos que ya existian quedaron con
+  // profesional_id = 1 (la dueña), y para ella la formula cae en la primera
+  // rama y devuelve exactamente lo que devolvia antes.
+  //
+  // El || 0 evita que un turno sin comision_monto propague un NaN y rompa el
+  // grafico entero.
+  const ingresoEstudio = (t) =>
+    t.profesional?.comision_pct_default == null
+      ? precioTurno(t)
+      : (Number(t.comision_monto) || 0);
+
+  // Volumen que paso por el estudio pero NO es plata del estudio.
+  const facturadoPorTerceras = turnosMetricas
+    .filter(t => t.estado === 'confirmado')
+    .filter(t => t.profesional?.comision_pct_default != null)
+    .reduce((s, t) => s + precioTurno(t), 0);
+
+  const mesesMap = {}; turnosMetricas.filter(t => t.estado === 'confirmado').forEach(t => { const f = fechaLocal(t.fecha); const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`; if (!mesesMap[clave]) mesesMap[clave] = { clave, label: `${mesesNombres[f.getMonth()]} ${String(f.getFullYear()).slice(2)}`, total: 0, cantidad: 0 }; mesesMap[clave].total += ingresoEstudio(t); mesesMap[clave].cantidad++; });
   const mesesTodos = Object.values(mesesMap).sort((a, b) => a.clave.localeCompare(b.clave));
   const mesesHistoricos = mesesTodos.filter(m => m.clave <= claveMesActual);
   const mesesFuturos = mesesTodos.filter(m => m.clave > claveMesActual);
@@ -380,7 +434,9 @@ export default function AdminPage() {
   const hoyStr = format(new Date(), 'yyyy-MM-dd');
   const turnosProximos = turnos.filter(t => t.fecha.split('T')[0] >= hoyStr && t.estado === 'confirmado').sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || a.hora_inicio.localeCompare(b.hora_inicio));
   const turnosHoy = turnos.filter(t => t.fecha.split('T')[0] === hoyStr && t.estado === 'confirmado');
-  const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx); });
+  // Solo la agenda que se esta viendo: cada profesional tiene sus propios
+  // rangos y su propio espacio entre turnos.
+  const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx && h.profesional_id === profHorarios); });
  
   const opcionesHoraEdit = (() => {
     if (!editandoTurno) return [];
@@ -399,8 +455,24 @@ export default function AdminPage() {
   };
  
   // ── Calendario de turnos (semana / día, estilo Google Calendar) ───────────────────
+  // En el alta manual, en cuanto se elige un servicio los de las otras
+  // profesionales desaparecen: el backend rechaza las reservas mixtas, asi que
+  // mejor que Daniela no pueda armarlas.
+  const profesionalDelManual = (() => {
+    const primero = turnoManual.servicios_ids[0];
+    if (!primero) return null;
+    return servicios.find(s => String(s.id) === String(primero))?.profesional_id ?? null;
+  })();
+  const serviciosManualDisponibles = servicios
+    .filter(s => s.activo)
+    .filter(s => profesionalDelManual === null || s.profesional_id === profesionalDelManual);
+
   const turnosPorFechaCal = {};
-  turnos.filter(t => t.estado === 'confirmado').forEach(t => { const key = t.fecha.split('T')[0]; (turnosPorFechaCal[key] = turnosPorFechaCal[key] || []).push(t); });
+  // filtroProfesional null = las dos agendas juntas, que es la vista por defecto.
+  turnos
+    .filter(t => t.estado === 'confirmado')
+    .filter(t => filtroProfesional === null || t.profesional_id === filtroProfesional)
+    .forEach(t => { const key = t.fecha.split('T')[0]; (turnosPorFechaCal[key] = turnosPorFechaCal[key] || []).push(t); });
  
   const bloquesPorFechaCal = {};
   bloques.forEach(b => { const key = b.fecha.split('T')[0]; (bloquesPorFechaCal[key] = bloquesPorFechaCal[key] || []).push(b); });
@@ -422,6 +494,13 @@ export default function AdminPage() {
   // Colores estables por servicio (mismo servicio = mismo color siempre)
   const PALETA_CAL = ['#8B6F5E', '#6B8F6B', '#7C93C4', '#C4837C', '#B08FC4', '#C4A857', '#5FA8A0', '#C46B95'];
   const colorServicioCal = (servicioId) => PALETA_CAL[servicioId % PALETA_CAL.length];
+  // Con dos agendas en paralelo, lo que hay que distinguir de un vistazo es de
+  // quien es cada columna, no que servicio es.
+  const PALETA_PROF = ['#8B6F5E', '#7C93C4', '#6B8F6B', '#C4837C', '#B08FC4'];
+  const colorProfesionalCal = (t) => {
+    const idx = profesionales.findIndex(p => p.id === t.profesional_id);
+    return idx >= 0 ? PALETA_PROF[idx % PALETA_PROF.length] : colorServicioCal(t.servicio_id);
+  };
  
   // Asigna "carriles" a turnos solapados dentro de un mismo día, para mostrarlos lado a lado
   // (ej. servicios intercalados de un mismo grupo_reserva, o dos clientas distintas a la misma hora)
@@ -446,6 +525,16 @@ export default function AdminPage() {
     : [fechaCalendario];
  
   // Tarjeta de turno reutilizable (con edición inline, extras y total)
+  // Se apaga cuando la clienta no vino: el turno sigue confirmado pero no entra
+  // en la liquidacion de la profesional.
+  const handleLiquidable = async (turno, valor) => {
+    try {
+      await api.patch(`/api/admin/turnos/${turno.id}/liquidable`, { liquidable: valor }, headers());
+      showMsg(valor ? 'El turno vuelve a liquidarse' : 'El turno queda fuera de la liquidación');
+      loadTurnos();
+    } catch { showErr('Error'); }
+  };
+
   const renderTurnoCard = (turno) => (
     <div key={turno.id} className="card">{editandoTurno?.id === turno.id ? (
       <form onSubmit={handleEditarTurno} className="space-y-4">
@@ -463,7 +552,7 @@ export default function AdminPage() {
         <div className="flex gap-2"><button type="submit" disabled={!editandoTurno.hora_inicio} className="btn-primary">Guardar cambios</button><button type="button" onClick={() => setEditandoTurno(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm text-[#8B6F5E] cursor-pointer">Cancelar</button></div>
       </form>
     ) : (
-      <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}</p>{turno.extras && turno.extras.length > 0 && (<p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {turno.extras.map(e => e.nombre).join(', ')} · Total ${totalTurno(turno).toLocaleString('es-AR')}</p>)}</div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div><div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
+      <div className="flex items-center justify-between"><div><p className="font-semibold">{turno.cliente_nombre} {turno.cliente_apellido}</p><p className="text-sm text-[#8B6F5E]">{format(fechaLocal(turno.fecha), "EEE d MMM", {locale: es})} · {turno.hora_inicio} hs</p><p className="text-xs text-[#A89585]">{turno.servicio?.nombre}{turno.profesional?.nombre ? ` · ${turno.profesional.nombre}` : ''}</p>{turno.extras && turno.extras.length > 0 && (<p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {turno.extras.map(e => e.nombre).join(', ')} · Total ${totalTurno(turno).toLocaleString('es-AR')}</p>)}</div><div className="text-right"><p className="text-xs text-[#A89585]">{turno.cliente_telefono}</p><div className="flex gap-2 mt-1 justify-end"><span className="text-xs px-2 py-0.5 rounded-full bg-[#E8F5E8] text-[#6B8F6B]">confirmado</span>{turno.origen === 'manual' && <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#A89585]">manual</span>}</div>{turno.profesional?.comision_pct_default !== null && turno.profesional && (<div className="mt-1"><label className="text-xs text-[#A89585] flex items-center gap-1 justify-end cursor-pointer"><input type="checkbox" checked={turno.liquidable !== false} onChange={e => handleLiquidable(turno, e.target.checked)} className="w-3 h-3 accent-[#8B6F5E]" />se liquida</label></div>)}<div className="flex gap-3 justify-end mt-2"><button onClick={() => handleAbrirEdicion(turno)} className="text-xs text-[#8B6F5E] hover:underline cursor-pointer">Editar</button><button onClick={() => handleCancelarTurno(turno)} className="text-xs text-[#C47070] hover:underline cursor-pointer">Cancelar turno</button></div></div></div>
     )}</div>
   );
  
@@ -483,7 +572,7 @@ export default function AdminPage() {
       </div>
  
       <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1 mb-6 flex-wrap">
-        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'cobros',label:'💳 Cobros'},{id:'metricas',label:'📊 Métricas'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
+        {[{id:'turnos',label:'📋 Turnos'},{id:'servicios',label:'💅 Servicios'},{id:'extras',label:'✨ Extras'},{id:'horarios',label:'🕐 Horarios'},{id:'bloques',label:'🚫 Bloqueos'},{id:'cobros',label:'💳 Cobros'},{id:'metricas',label:'📊 Métricas'},{id:'equipo',label:'👥 Equipo'},{id:'clientes',label:'👤 Clientes'},{id:'waitlist',label:'🔔 Waitlist'}].map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setClienteSeleccionado(null); setFichaCliente(null); }} className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors cursor-pointer ${tab === t.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>{t.label}</button>
         ))}
       </div>
@@ -500,7 +589,10 @@ export default function AdminPage() {
           <div>
             <label className="text-xs text-[#A89585] mb-2 block">Servicios (elegí uno o varios)</label>
             <div className="flex flex-wrap gap-2">
-              {servicios.map(s => {
+              {/* Una reserva es de una sola profesional. En cuanto se elige un
+                  servicio, los de las demas quedan fuera: asi no se puede armar
+                  una reserva mixta que el backend va a rechazar. */}
+              {serviciosManualDisponibles.map(s => {
                 const idStr = String(s.id);
                 const checked = turnoManual.servicios_ids.includes(idStr);
                 return (
@@ -573,6 +665,17 @@ export default function AdminPage() {
               <button onClick={() => setVistaCalendario('semana')} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${vistaCalendario === 'semana' ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Semana</button>
               <button onClick={() => setVistaCalendario('dia')} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${vistaCalendario === 'dia' ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Día</button>
             </div>
+            {profesionales.filter(p => p.activo).length > 1 && (
+              <div className="flex gap-1 bg-[#F5F0EB] rounded-lg p-1">
+                <button onClick={() => setFiltroProfesional(null)} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${filtroProfesional === null ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>Todas</button>
+                {profesionales.filter(p => p.activo).map((p, i) => (
+                  <button key={p.id} onClick={() => setFiltroProfesional(p.id)} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer flex items-center gap-1.5 ${filtroProfesional === p.id ? 'bg-white text-[#8B6F5E] shadow-sm' : 'text-[#A89585]'}`}>
+                    <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: PALETA_PROF[i % PALETA_PROF.length] }} />
+                    {p.nombre}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
  
           <div className="overflow-x-auto">
@@ -630,7 +733,7 @@ export default function AdminPage() {
                           return (
                             <button key={ev.id} onClick={() => setTurnoDetalle(ev)}
                               className="absolute z-10 rounded-md px-1.5 py-0.5 text-left text-white text-[10px] leading-tight overflow-hidden shadow-sm cursor-pointer hover:brightness-95"
-                              style={{ top: `${top}px`, height: `${altura}px`, left: `${ev._col * anchoPct}%`, width: `calc(${anchoPct}% - 2px)`, backgroundColor: colorServicioCal(ev.servicio_id) }}>
+                              style={{ top: `${top}px`, height: `${altura}px`, left: `${ev._col * anchoPct}%`, width: `calc(${anchoPct}% - 2px)`, backgroundColor: colorProfesionalCal(ev) }}>
                               <p className="font-semibold truncate">{ev.hora_inicio} {ev.cliente_nombre}</p>
                               {altura > 28 && <p className="truncate opacity-90">{ev.servicio?.nombre}</p>}
                             </button>
@@ -666,6 +769,10 @@ export default function AdminPage() {
               <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={nuevoServicio.nombre} onChange={e => setNuevoServicio({...nuevoServicio, nombre: e.target.value})} placeholder="Ej: Manicura gel" className="input-field" required /></div>
               <div><label className="text-xs text-[#A89585] mb-1 block">Duración (min)</label><input type="number" value={nuevoServicio.duracion_minutos} onChange={e => setNuevoServicio({...nuevoServicio, duracion_minutos: parseInt(e.target.value)||0})} min="15" step="15" className="input-field" required /></div>
               <div><label className="text-xs text-[#A89585] mb-1 block">Precio ($)</label><input type="number" value={nuevoServicio.precio_pesos} onChange={e => setNuevoServicio({...nuevoServicio, precio_pesos: e.target.value})} placeholder="500" className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">Profesional</label><select value={nuevoServicio.profesional_id ?? ''} onChange={e => setNuevoServicio({...nuevoServicio, profesional_id: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{profesionales.filter(p => p.activo).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+              {profesionales.find(p => String(p.id) === String(nuevoServicio.profesional_id))?.comision_pct_default !== null && nuevoServicio.profesional_id && (
+                <div><label className="text-xs text-[#A89585] mb-1 block">Comisión (%)</label><input type="number" value={nuevoServicio.comision_pct ?? ''} onChange={e => setNuevoServicio({...nuevoServicio, comision_pct: e.target.value})} min="0" max="100" step="0.5" placeholder="hereda" className="input-field" /></div>
+              )}
               <div className="flex items-end"><button type="submit" className="btn-primary w-full">Crear</button></div>
             </div>
             <div>
@@ -717,6 +824,10 @@ export default function AdminPage() {
                 <div><label className="text-xs text-[#A89585] mb-1 block">Nombre</label><input type="text" value={editandoServicio.nombre} onChange={e => setEditandoServicio({...editandoServicio, nombre: e.target.value})} className="input-field" /></div>
                 <div><label className="text-xs text-[#A89585] mb-1 block">Duración</label><input type="number" value={editandoServicio.duracion_minutos} onChange={e => setEditandoServicio({...editandoServicio, duracion_minutos: e.target.value})} className="input-field" /></div>
                 <div><label className="text-xs text-[#A89585] mb-1 block">Precio</label><input type="number" value={editandoServicio.precio_pesos} onChange={e => setEditandoServicio({...editandoServicio, precio_pesos: e.target.value})} className="input-field" /></div>
+                <div><label className="text-xs text-[#A89585] mb-1 block">Profesional</label><select value={editandoServicio.profesional_id ?? ''} onChange={e => setEditandoServicio({...editandoServicio, profesional_id: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{profesionales.filter(p => p.activo).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+                {profesionales.find(p => String(p.id) === String(editandoServicio.profesional_id))?.comision_pct_default !== null && editandoServicio.profesional_id && (
+                  <div><label className="text-xs text-[#A89585] mb-1 block">Comisión (%)</label><input type="number" value={editandoServicio.comision_pct ?? ''} onChange={e => setEditandoServicio({...editandoServicio, comision_pct: e.target.value})} min="0" max="100" step="0.5" placeholder="hereda" className="input-field" /></div>
+                )}
                 <div className="flex gap-2"><button type="submit" className="btn-primary flex-1">Guardar</button><button type="button" onClick={() => setEditandoServicio(null)} className="px-3 py-2 border border-[#E8DDD3] rounded-lg text-sm cursor-pointer">✕</button></div>
               </div>
               <div>
@@ -763,8 +874,16 @@ export default function AdminPage() {
           ) : (
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-semibold">{s.nombre}</p>
-                <p className="text-sm text-[#A89585]">{s.duracion_minutos} min</p>
+                <p className="font-semibold">
+                  {s.nombre}
+                  {!s.activo && <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-[#FBEAEA] text-[#C47070]">inactivo</span>}
+                </p>
+                <p className="text-sm text-[#A89585]">
+                  {s.profesional?.nombre ?? 'sin profesional'} · {s.duracion_minutos} min · ${Number(s.precio_pesos).toLocaleString('es-AR')}
+                  {s.profesional?.comision_pct_default !== null && s.profesional && (
+                    <> · comisión {s.comision_pct === null || s.comision_pct === undefined ? `${Number(s.profesional.comision_pct_default)}% (heredada)` : `${Number(s.comision_pct)}%`}</>
+                  )}
+                </p>
                 {s.incluye_nota && s.nota && (
                   <p className="text-xs text-[#6B8F6B] font-medium mt-1">✨ {s.nota}</p>
                 )}
@@ -780,7 +899,7 @@ export default function AdminPage() {
               </div>
               <div className="flex items-center gap-4">
                 <p className="text-lg font-bold text-[#8B6F5E]">${s.precio_pesos}</p>
-                <button onClick={() => setEditandoServicio({...s, servicios_compatibles: Array.isArray(s.servicios_compatibles) ? [...s.servicios_compatibles] : [], intercalar_desde_min: s.intercalar_desde_min ?? 0, max_simultaneos: s.max_simultaneos ?? 2, intercalable: !!s.intercalable})} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button>
+                <button onClick={() => setEditandoServicio({...s, servicios_compatibles: Array.isArray(s.servicios_compatibles) ? [...s.servicios_compatibles] : [], intercalar_desde_min: s.intercalar_desde_min ?? 0, max_simultaneos: s.max_simultaneos ?? 2, intercalable: !!s.intercalable, profesional_id: s.profesional_id ?? '', comision_pct: s.comision_pct ?? ''})} className="text-sm text-[#8B6F5E] hover:underline cursor-pointer">Editar</button>
                 <button onClick={() => handleDesactivarServicio(s.id)} className="text-sm text-[#C47070] hover:underline cursor-pointer">Desactivar</button>
               </div>
             </div>
@@ -877,6 +996,16 @@ export default function AdminPage() {
  
       {/* HORARIOS */}
       {tab === 'horarios' && (<div className="animate-fade-up">
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {profesionales.filter(p => p.activo).map(p => (
+            <button
+              key={p.id}
+              onClick={() => setProfHorarios(p.id)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium cursor-pointer transition-colors ${profHorarios === p.id ? 'bg-[#8B6F5E] text-white' : 'bg-[#F5F0EB] text-[#A89585]'}`}
+            >{p.nombre}</button>
+          ))}
+        </div>
+        <p className="text-xs text-[#A89585] mb-4">Cada profesional tiene su propia agenda: los rangos que cargues acá son solo de {profesionales.find(p => p.id === profHorarios)?.nombre ?? 'ella'}.</p>
         <div className="card mb-6">
           <h3 className="font-semibold mb-4 text-[#8B6F5E]">➕ Agregar rango horario</h3>
           <form onSubmit={handleCrearRango} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
@@ -914,6 +1043,7 @@ export default function AdminPage() {
           <form onSubmit={handleCrearBloque} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
               <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={nuevoBloque.fecha} onChange={e => setNuevoBloque({...nuevoBloque, fecha: e.target.value})} className="input-field" required /></div>
+              <div><label className="text-xs text-[#A89585] mb-1 block">A quién afecta</label><select value={nuevoBloque.profesional_id} onChange={e => setNuevoBloque({...nuevoBloque, profesional_id: e.target.value})} className="input-field"><option value="">Todo el estudio</option>{profesionales.filter(p => p.activo).map(p => <option key={p.id} value={p.id}>Solo {p.nombre}</option>)}</select></div>
               <div><label className="text-xs text-[#A89585] mb-1 block">Motivo</label><input type="text" value={nuevoBloque.motivo} onChange={e => setNuevoBloque({...nuevoBloque, motivo: e.target.value})} placeholder="Ej: Feriado" className="input-field" /></div>
               <button type="submit" className="btn-primary">Bloquear</button>
             </div>
@@ -954,6 +1084,11 @@ export default function AdminPage() {
               <div>
                 <p className="font-semibold">{format(fechaLocal(b.fecha), "EEEE d 'de' MMMM yyyy", {locale: es})}</p>
                 <p className="text-sm text-[#8B6F5E]">{b.hora_inicio && b.hora_fin ? `⏰ De ${b.hora_inicio} a ${b.hora_fin} hs` : '🚫 Todo el día'}</p>
+                <p className="text-xs mt-0.5">
+                  {b.profesional_id === null
+                    ? <span className="px-2 py-0.5 rounded-full bg-[#FBEAEA] text-[#C47070]">Todo el estudio</span>
+                    : <span className="px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">Solo {b.profesional?.nombre ?? `profesional #${b.profesional_id}`}</span>}
+                </p>
                 {b.motivo && <p className="text-sm text-[#A89585]">{b.motivo}</p>}
               </div>
               <div className="flex items-center gap-3">
@@ -984,6 +1119,17 @@ export default function AdminPage() {
             <h4 className="font-semibold text-[#8B6F5E]">📈 Ingresos por mes</h4>
             <span className="text-xs text-[#A89585]">Histórico completo · no depende del filtro de arriba</span>
           </div>
+          {facturadoPorTerceras > 0 && (
+            <div className="bg-[#F5F0EB] rounded-lg p-3 mb-4">
+              <p className="text-sm text-[#8B6F5E]">
+                Facturado por otras profesionales:{' '}
+                <span className="font-bold">${Math.round(facturadoPorTerceras).toLocaleString('es-AR')}</span>
+              </p>
+              <p className="text-xs text-[#A89585] mt-0.5">
+                Volumen que pasó por el estudio pero que cobran ellas. Los números de arriba cuentan solo lo que entra al estudio: tus servicios completos, más la comisión de los suyos.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
             <div className="text-center bg-[#F5F0EB] rounded-lg p-3">
               <p className="text-xl font-bold text-[#8B6F5E]">${Math.round(promedioMensual).toLocaleString('es-AR')}</p>
@@ -1328,7 +1474,9 @@ export default function AdminPage() {
           </div>
         ))}</div>)}
       </div>)}
- 
+
+      {tab === 'equipo' && <EquipoTab token={token} showMsg={showMsg} showErr={showErr} />}
+
     </div>
   );
 }
