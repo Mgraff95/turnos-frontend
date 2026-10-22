@@ -242,6 +242,29 @@ export default function ReservarPage() {
   // ── Selección de servicios (multi) ─────────────
   const isServicioSel = (s) => serviciosSeleccionados.some(x => x.id === s.id);
  
+  // Una reserva es de una sola profesional. En cuanto se elige el primer
+  // servicio, el resto de la lista se limita a los de ella.
+  //
+  // El backend rechaza las reservas mixtas con un 400, pero la clienta no tiene
+  // que poder llegar a ese error: elegiria dos servicios, completaria sus datos
+  // y recien al final veria "no se pueden combinar". Eso es perder la reserva.
+  const profesionalElegida = serviciosSeleccionados[0]?.profesional_id ?? null;
+  const puedeElegir = (s) => profesionalElegida === null || s.profesional_id === profesionalElegida;
+
+  // Los servicios agrupados por profesional, para que la clienta entienda que
+  // son dos personas distintas y no dos categorias.
+  const gruposPorProfesional = (() => {
+    const mapa = new Map();
+    servicios.forEach(s => {
+      const key = s.profesional_id;
+      if (!mapa.has(key)) mapa.set(key, { profesional: s.profesional, servicios: [] });
+      mapa.get(key).servicios.push(s);
+    });
+    return [...mapa.values()].sort(
+      (a, b) => (a.profesional?.orden ?? 0) - (b.profesional?.orden ?? 0)
+    );
+  })();
+
   const toggleServicio = (s) => {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
@@ -274,7 +297,12 @@ export default function ReservarPage() {
     );
     const idsCompatibles = new Set();
     anclas.forEach(a => a.servicios_compatibles.forEach(id => { if (!idsSeleccionados.has(id)) idsCompatibles.add(id); }));
-    const compatiblesOfrecidos = servicios.filter(s => idsCompatibles.has(s.id));
+    // Solo compatibles de la MISMA profesional: la intercalación es que una
+    // profesional se haga cargo de dos de sus propios servicios a la vez. Un
+    // servicio de otra profesional no se intercala, se reserva aparte.
+    const compatiblesOfrecidos = servicios.filter(
+      s => idsCompatibles.has(s.id) && s.profesional_id === profesionalElegida
+    );
  
     if (compatiblesOfrecidos.length > 0) {
       setCompatiblesOfrecidosSnapshot(compatiblesOfrecidos);
@@ -598,22 +626,50 @@ export default function ReservarPage() {
       {step === 1 && (
         <div className="space-y-3 animate-fade-up">
           <p className="font-medium mb-1">¿Qué servicios querés?</p>
-          <p className="text-sm text-[#8A8580] mb-4">Podés elegir más de uno y te los agendamos uno detrás del otro. 💆‍♀️</p>
-          {servicios.map(s => {
-            const sel = isServicioSel(s);
+          <p className="text-sm text-[#8A8580] mb-4">
+            {gruposPorProfesional.length > 1
+              ? 'Podés elegir más de uno de la misma profesional y te los agendamos seguidos. 💆‍♀️'
+              : 'Podés elegir más de uno y te los agendamos uno detrás del otro. 💆‍♀️'}
+          </p>
+          {gruposPorProfesional.map(grupo => {
+            // Si ya se eligio un servicio, los de las otras profesionales se
+            // muestran deshabilitados con el motivo a la vista. Asi la clienta
+            // entiende por que no puede combinarlos, en vez de descubrirlo con
+            // un error al final del flujo.
+            const bloqueado = profesionalElegida !== null && grupo.profesional?.id !== profesionalElegida;
             return (
-              <button key={s.id} onClick={() => toggleServicio(s)}
-                className={`card w-full text-left transition-all cursor-pointer flex justify-between items-center ${sel ? 'border-2 border-[#E6005C] bg-[#FDEFF5]' : 'border border-[#F5D9E4] hover:border-[#E6005C]'}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#E6005C] border-[#E6005C] text-white' : 'border-[#F2C4D8] text-transparent'}`}>✓</div>
-                  <div>
-                    <p className="font-semibold text-[#3A3A3A]">{s.nombre}</p>
-                    <p className="text-sm text-[#8A8580]">{s.duracion_minutos} minutos</p>
-                    {s.incluye_nota && s.nota && <p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {s.nota}</p>}
-                  </div>
+              <div key={grupo.profesional?.id ?? 'sin'} className={bloqueado ? 'opacity-50' : ''}>
+                {gruposPorProfesional.length > 1 && (
+                  <p className="text-sm font-semibold text-[#8A8580] mt-5 mb-2">
+                    Con {grupo.profesional?.nombre ?? 'el estudio'}
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {grupo.servicios.map(s => {
+                    const sel = isServicioSel(s);
+                    const habilitado = puedeElegir(s);
+                    return (
+                      <button key={s.id} onClick={() => habilitado && toggleServicio(s)} disabled={!habilitado}
+                        className={`card w-full text-left transition-all flex justify-between items-center ${habilitado ? 'cursor-pointer' : 'cursor-not-allowed'} ${sel ? 'border-2 border-[#E6005C] bg-[#FDEFF5]' : 'border border-[#F5D9E4]'} ${habilitado && !sel ? 'hover:border-[#E6005C]' : ''}`}>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center text-xs font-bold ${sel ? 'bg-[#E6005C] border-[#E6005C] text-white' : 'border-[#F2C4D8] text-transparent'}`}>✓</div>
+                          <div>
+                            <p className="font-semibold text-[#3A3A3A]">{s.nombre}</p>
+                            <p className="text-sm text-[#8A8580]">{s.duracion_minutos} minutos</p>
+                            {s.incluye_nota && s.nota && <p className="text-xs text-[#6B8F6B] font-medium mt-0.5">✨ {s.nota}</p>}
+                          </div>
+                        </div>
+                        <p className="text-lg font-bold text-[#E6005C]">${s.precio_pesos}</p>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-lg font-bold text-[#E6005C]">${s.precio_pesos}</p>
-              </button>
+                {bloqueado && (
+                  <p className="text-xs text-[#8A8580] mt-2">
+                    Para sumar un servicio con {grupo.profesional?.nombre ?? 'otra profesional'}, hacé una segunda reserva: son dos agendas distintas.
+                  </p>
+                )}
+              </div>
             );
           })}
  
