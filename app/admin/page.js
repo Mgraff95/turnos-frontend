@@ -78,13 +78,14 @@ export default function AdminPage() {
     if (turnoManual.servicios_ids.length === 1) {
       const sid = turnoManual.servicios_ids[0];
       const exIds = (extrasManualElegidos[sid] || []).map(e => e.id);
-      const extrasParam = exIds.length > 0 ? `?extras=${exIds.join(',')}` : '';
+      const extrasParam = exIds.length > 0 ? `?extras=${exIds.join(',')}&sin_minimo=1` : '?sin_minimo=1';
       api.get(`/api/turnos/disponibilidad/${turnoManual.fecha}/${sid}${extrasParam}`)
         .then(res => setHorariosDisponibles(res.data.horarios || []))
         .catch(() => setHorariosDisponibles([]));
     } else {
       api.post('/api/turnos/disponibilidad-multi', {
         fecha: turnoManual.fecha,
+        sin_minimo: true,
         servicios: turnoManual.servicios_ids.map(id => ({ servicio_id: id, extras: (extrasManualElegidos[id] || []).map(e => e.id) }))
       })
         .then(res => setHorariosDisponibles(res.data.horarios || []))
@@ -116,7 +117,7 @@ export default function AdminPage() {
     })();
     return () => { cancelado = true; };
   }, [turnoManual.servicios_ids]);
-  useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
+  useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}?sin_minimo=1`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
   useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);

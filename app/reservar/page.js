@@ -16,8 +16,7 @@ export default function ReservarPage() {
   const [fechaSeleccionada, setFechaSeleccionada] = useState('');
   const [horaSeleccionada, setHoraSeleccionada] = useState('');
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
-  const [paginaFecha, setPaginaFecha] = useState(0);
-  const [nombre, setNombre] = useState('');
+const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
   const [loading, setLoading] = useState(false);
@@ -111,14 +110,28 @@ export default function ReservarPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fechaSeleccionada, serviciosSeleccionados, extrasElegidos]);
  
-  const [diasHabilitados, setDiasHabilitados] = useState([]);
- 
+  // Todos los rangos, con su profesional: los dias abiertos dependen de QUIEN
+  // atiende. Antes se mezclaban las dos agendas y se ofrecian dias que esa
+  // profesional no trabaja.
+  const [horariosConfig, setHorariosConfig] = useState([]);
+  const [bloqueosDiaCompleto, setBloqueosDiaCompleto] = useState([]);
+  const [mesVisible, setMesVisible] = useState(() => {
+    const h = new Date();
+    return new Date(h.getFullYear(), h.getMonth(), 1);
+  });
+
   useEffect(() => {
     api.get('/api/horarios')
-      .then(res => {
-        const dias = [...new Set(res.data.map(h => h.dia_semana))];
-        setDiasHabilitados(dias);
-      })
+      .then(res => setHorariosConfig(res.data || []))
+      .catch(() => {});
+    // Solo los de dia completo: un bloqueo parcial no cierra el dia, y
+    // resolverlo bien es trabajo del endpoint de disponibilidad.
+    api.get('/api/horarios/bloques-cerrados')
+      .then(res => setBloqueosDiaCompleto(
+        (res.data || [])
+          .filter(b => !b.hora_inicio || !b.hora_fin)
+          .map(b => String(b.fecha).split('T')[0])
+      ))
       .catch(() => {});
   }, []);
  
@@ -127,14 +140,47 @@ export default function ReservarPage() {
   const diaJsToDB = (jsDay) => jsDay === 0 ? 6 : jsDay - 1;
  
   const hoy = startOfToday();
-  const proxDias = Array.from({ length: 60 }, (_, i) => addDays(hoy, i + 1))
-    .filter(dia => diasHabilitados.includes(diaJsToDB(dia.getDay())));
- 
-  // Paginación de fechas (5 por página, con flechas)
-  const diasPorPagina = 5;
-  const totalPaginas = Math.max(1, Math.ceil(proxDias.length / diasPorPagina));
-  const paginaSegura = Math.min(paginaFecha, totalPaginas - 1);
-  const diasPagina = proxDias.slice(paginaSegura * diasPorPagina, paginaSegura * diasPorPagina + diasPorPagina);
+
+  // La profesional de la reserva: sus dias son los que se pueden elegir.
+  const diasHabilitados = (() => {
+    const prof = serviciosSeleccionados[0]?.profesional_id ?? null;
+    const rangos = prof === null
+      ? horariosConfig
+      : horariosConfig.filter(h => h.profesional_id === prof);
+    return [...new Set(rangos.map(h => h.dia_semana))];
+  })();
+
+  // Un turno no se puede reservar con menos de 24 horas. Si TODO el dia cae
+  // dentro de esa ventana, el dia se apaga. El backend filtra igual slot por
+  // slot; esto es para que no se vea un dia que al tocarlo aparece vacio.
+  const HORAS_MINIMAS = 24;
+  const limiteMinimo = new Date(Date.now() + HORAS_MINIMAS * 60 * 60 * 1000);
+
+  const diaSeleccionable = (dia) => {
+    if (!diasHabilitados.includes(diaJsToDB(dia.getDay()))) return false;
+    const fechaStr = format(dia, 'yyyy-MM-dd');
+    if (bloqueosDiaCompleto.includes(fechaStr)) return false;
+    // El final del dia, generoso: si ni a las 23:59 se llega al minimo, no hay
+    // ningun horario posible.
+    const finDelDia = new Date(dia.getFullYear(), dia.getMonth(), dia.getDate(), 23, 59);
+    return finDelDia > limiteMinimo;
+  };
+
+  // Grilla del mes visible, arrancando en lunes.
+  const celdasDelMes = (() => {
+    const primero = new Date(mesVisible.getFullYear(), mesVisible.getMonth(), 1);
+    const ultimo = new Date(mesVisible.getFullYear(), mesVisible.getMonth() + 1, 0);
+    const huecoInicial = diaJsToDB(primero.getDay());
+    const celdas = Array.from({ length: huecoInicial }, () => null);
+    for (let d = 1; d <= ultimo.getDate(); d++) {
+      celdas.push(new Date(mesVisible.getFullYear(), mesVisible.getMonth(), d));
+    }
+    return celdas;
+  })();
+
+  // Hacia atras no se pasa del mes actual; hacia adelante no hay tope.
+  const mesActual = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  const puedeMesAnterior = mesVisible > mesActual;
  
   // Detectar si faltan franjas
   const tieneMañana = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) < 14);
@@ -268,7 +314,7 @@ export default function ReservarPage() {
   const toggleServicio = (s) => {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
-    setPaginaFecha(0);
+    setMesVisible(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
     setServiciosSeleccionados(prev =>
       prev.some(x => x.id === s.id)
         ? prev.filter(x => x.id !== s.id)
@@ -850,28 +896,52 @@ export default function ReservarPage() {
           {!fechaSeleccionada ? (
             <div className="animate-fade-up">
               <p className="font-medium mb-3">Elegí una fecha</p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPaginaFecha(p => Math.max(0, p - 1))} disabled={paginaSegura === 0}
-                  className="shrink-0 w-9 h-10 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#E6005C] cursor-pointer">‹</button>
-                <div className="grid grid-cols-5 gap-2 flex-1">
-                  {diasPagina.map(dia => {
-                    const fechaStr = format(dia, 'yyyy-MM-dd');
-                    return (
-                      <button key={fechaStr} onClick={() => setFechaSeleccionada(fechaStr)}
-                        className="p-2 rounded-lg text-center text-sm transition-colors cursor-pointer bg-white border border-[#F5D9E4] hover:border-[#E6005C] hover:bg-[#FDEFF5] text-[#3A3A3A]">
-                        <p className="text-xs opacity-70">{format(dia, 'EEE', { locale: es })}</p>
-                        <p className="font-bold text-base">{format(dia, 'd')}</p>
-                        <p className="text-xs opacity-70">{format(dia, 'MMM', { locale: es })}</p>
-                      </button>
-                    );
-                  })}
-                </div>
-                <button onClick={() => setPaginaFecha(p => Math.min(totalPaginas - 1, p + 1))} disabled={paginaSegura >= totalPaginas - 1}
-                  className="shrink-0 w-9 h-10 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#E6005C] cursor-pointer">›</button>
+
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setMesVisible(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+                  disabled={!puedeMesAnterior}
+                  aria-label="Mes anterior"
+                  className="w-9 h-9 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#E6005C] cursor-pointer">‹</button>
+                <p className="font-semibold text-[#3A3A3A] capitalize">
+                  {format(mesVisible, 'MMMM yyyy', { locale: es })}
+                </p>
+                <button
+                  onClick={() => setMesVisible(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+                  aria-label="Mes siguiente"
+                  className="w-9 h-9 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center hover:border-[#E6005C] cursor-pointer">›</button>
               </div>
-              {totalPaginas > 1 && (
-                <p className="text-center text-xs text-[#8A8580] mt-3">Usá las flechas para ver más fechas · {paginaSegura + 1}/{totalPaginas}</p>
-              )}
+
+              <div className="grid grid-cols-7 gap-1 mb-1">
+                {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+                  <p key={i} className="text-center text-xs text-[#8A8580] py-1">{d}</p>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-7 gap-1">
+                {celdasDelMes.map((dia, i) => {
+                  if (!dia) return <div key={`v${i}`} />;
+                  const fechaStr = format(dia, 'yyyy-MM-dd');
+                  const habilitado = diaSeleccionable(dia);
+                  return (
+                    <button
+                      key={fechaStr}
+                      onClick={() => habilitado && setFechaSeleccionada(fechaStr)}
+                      disabled={!habilitado}
+                      className={`aspect-square rounded-lg text-sm font-medium transition-colors ${
+                        habilitado
+                          ? 'bg-white border border-[#F5D9E4] text-[#3A3A3A] hover:border-[#E6005C] hover:bg-[#FDEFF5] cursor-pointer'
+                          : 'text-[#D9D4D0] cursor-not-allowed'
+                      }`}>
+                      {format(dia, 'd')}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="text-center text-xs text-[#8A8580] mt-3">
+                Los turnos se reservan con al menos 24 horas de anticipación.
+              </p>
             </div>
           ) : (
             <div className="animate-fade-up">
