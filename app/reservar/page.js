@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import { format, addDays, startOfToday } from 'date-fns';
 import { es } from 'date-fns/locale';
+import CalendarioFechas from '../components/CalendarioFechas';
  
 export default function ReservarPage() {
   const [step, setStep] = useState(1);
@@ -115,10 +116,6 @@ const [nombre, setNombre] = useState('');
   // profesional no trabaja.
   const [horariosConfig, setHorariosConfig] = useState([]);
   const [bloqueosDiaCompleto, setBloqueosDiaCompleto] = useState([]);
-  const [mesVisible, setMesVisible] = useState(() => {
-    const h = new Date();
-    return new Date(h.getFullYear(), h.getMonth(), 1);
-  });
 
   useEffect(() => {
     api.get('/api/horarios')
@@ -149,58 +146,6 @@ const [nombre, setNombre] = useState('');
       : horariosConfig.filter(h => h.profesional_id === prof);
   })();
 
-  // Los rangos que aplican a un dia concreto. Espeja rangosQueAplican del
-  // backend: si hay excepcion para esa fecha, la excepcion REEMPLAZA al horario
-  // semanal. Una excepcion en domingo abre ESE domingo, no todos los domingos.
-  const rangosDelDia = (dia, fechaStr) => {
-    const excepciones = rangosDeLaProfesional.filter(
-      h => h.fecha && String(h.fecha).split('T')[0] === fechaStr
-    );
-    if (excepciones.length > 0) return excepciones;
-    return rangosDeLaProfesional.filter(h => !h.fecha && h.dia_semana === diaJsToDB(dia.getDay()));
-  };
-
-  // Un turno no se puede reservar con menos de 24 horas. Si TODO el dia cae
-  // dentro de esa ventana, el dia se apaga. El backend filtra igual slot por
-  // slot; esto es para que no se vea un dia que al tocarlo aparece vacio.
-  const HORAS_MINIMAS = 24;
-  const limiteMinimo = new Date(Date.now() + HORAS_MINIMAS * 60 * 60 * 1000);
-
-  const diaSeleccionable = (dia) => {
-    const fechaStr = format(dia, 'yyyy-MM-dd');
-
-    // Sin rangos ese dia, no se atiende: eso cubre tanto el dia de semana
-    // cerrado como la ausencia de excepcion.
-    const rangos = rangosDelDia(dia, fechaStr);
-    if (rangos.length === 0) return false;
-
-    if (bloqueosDiaCompleto.includes(fechaStr)) return false;
-
-    // Contra el CIERRE REAL del dia, no contra las 23:59. Si el estudio cierra
-    // a las 17:00, un dia cuyo cierre ya cae dentro de las 24 horas no tiene
-    // ningun turno posible, y mostrarlo habilitado para que al tocarlo aparezca
-    // vacio es peor que apagarlo.
-    const ultimoCierre = rangos.map(r => r.hora_fin).sort().pop();
-    const [hh, mm] = ultimoCierre.split(':').map(Number);
-    const cierre = new Date(dia.getFullYear(), dia.getMonth(), dia.getDate(), hh, mm);
-    return cierre > limiteMinimo;
-  };
-
-  // Grilla del mes visible, arrancando en lunes.
-  const celdasDelMes = (() => {
-    const primero = new Date(mesVisible.getFullYear(), mesVisible.getMonth(), 1);
-    const ultimo = new Date(mesVisible.getFullYear(), mesVisible.getMonth() + 1, 0);
-    const huecoInicial = diaJsToDB(primero.getDay());
-    const celdas = Array.from({ length: huecoInicial }, () => null);
-    for (let d = 1; d <= ultimo.getDate(); d++) {
-      celdas.push(new Date(mesVisible.getFullYear(), mesVisible.getMonth(), d));
-    }
-    return celdas;
-  })();
-
-  // Hacia atras no se pasa del mes actual; hacia adelante no hay tope.
-  const mesActual = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-  const puedeMesAnterior = mesVisible > mesActual;
  
   // Detectar si faltan franjas
   const tieneMañana = horariosDisponibles.some(h => parseInt(h.hora_inicio.split(':')[0]) < 14);
@@ -334,8 +279,7 @@ const [nombre, setNombre] = useState('');
   const toggleServicio = (s) => {
     setFechaSeleccionada('');
     setHoraSeleccionada('');
-    setMesVisible(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-    setServiciosSeleccionados(prev =>
+setServiciosSeleccionados(prev =>
       prev.some(x => x.id === s.id)
         ? prev.filter(x => x.id !== s.id)
         : [...prev, s]
@@ -916,52 +860,11 @@ const [nombre, setNombre] = useState('');
           {!fechaSeleccionada ? (
             <div className="animate-fade-up">
               <p className="font-medium mb-3">Elegí una fecha</p>
-
-              <div className="flex items-center justify-between mb-3">
-                <button
-                  onClick={() => setMesVisible(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-                  disabled={!puedeMesAnterior}
-                  aria-label="Mes anterior"
-                  className="w-9 h-9 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center disabled:opacity-30 disabled:cursor-default hover:border-[#E6005C] cursor-pointer">‹</button>
-                <p className="font-semibold text-[#3A3A3A] capitalize">
-                  {format(mesVisible, 'MMMM yyyy', { locale: es })}
-                </p>
-                <button
-                  onClick={() => setMesVisible(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-                  aria-label="Mes siguiente"
-                  className="w-9 h-9 rounded-lg border border-[#F5D9E4] text-[#E6005C] text-lg flex items-center justify-center hover:border-[#E6005C] cursor-pointer">›</button>
-              </div>
-
-              <div className="grid grid-cols-7 gap-1 mb-1">
-                {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
-                  <p key={i} className="text-center text-xs text-[#8A8580] py-1">{d}</p>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-7 gap-1">
-                {celdasDelMes.map((dia, i) => {
-                  if (!dia) return <div key={`v${i}`} />;
-                  const fechaStr = format(dia, 'yyyy-MM-dd');
-                  const habilitado = diaSeleccionable(dia);
-                  return (
-                    <button
-                      key={fechaStr}
-                      onClick={() => habilitado && setFechaSeleccionada(fechaStr)}
-                      disabled={!habilitado}
-                      className={`aspect-square rounded-lg text-sm font-medium transition-colors ${
-                        habilitado
-                          ? 'bg-white border border-[#F5D9E4] text-[#3A3A3A] hover:border-[#E6005C] hover:bg-[#FDEFF5] cursor-pointer'
-                          : 'text-[#D9D4D0] cursor-not-allowed'
-                      }`}>
-                      {format(dia, 'd')}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <p className="text-center text-xs text-[#8A8580] mt-3">
-                Los turnos se reservan con al menos 24 horas de anticipación.
-              </p>
+              <CalendarioFechas
+                rangos={rangosDeLaProfesional}
+                bloqueosDiaCompleto={bloqueosDiaCompleto}
+                onElegir={setFechaSeleccionada}
+              />
             </div>
           ) : (
             <div className="animate-fade-up">

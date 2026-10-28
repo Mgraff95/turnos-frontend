@@ -1,10 +1,11 @@
 
 'use client';
  
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import CalendarioFechas from '../components/CalendarioFechas';
  
 export default function MisTurnosPage() {
   const [telefono, setTelefono] = useState('');
@@ -14,11 +15,81 @@ export default function MisTurnosPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mensaje, setMensaje] = useState('');
- 
-  const handleBuscar = async (e) => {
-    e.preventDefault();
+
+  // ── Cambiar fecha y hora de un turno ──
+  // Solo fecha y hora: el servicio no cambia, asi que los extras, el precio y
+  // la profesional quedan intactos y no hay nada que se pueda perder.
+  const [editando, setEditando] = useState(null);
+  const [nuevaFecha, setNuevaFecha] = useState('');
+  const [horariosDia, setHorariosDia] = useState([]);
+  const [cargandoHorarios, setCargandoHorarios] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+
+  // Para pintar el calendario: los rangos de atencion y los dias cerrados.
+  const [horariosConfig, setHorariosConfig] = useState([]);
+  const [bloqueosDiaCompleto, setBloqueosDiaCompleto] = useState([]);
+
+  useEffect(() => {
+    api.get('/api/horarios')
+      .then(res => setHorariosConfig(res.data || []))
+      .catch(() => {});
+    api.get('/api/horarios/bloques-cerrados')
+      .then(res => setBloqueosDiaCompleto(
+        (res.data || [])
+          .filter(b => !b.hora_inicio || !b.hora_fin)
+          .map(b => String(b.fecha).split('T')[0])
+      ))
+      .catch(() => {});
+  }, []);
+
+  // Horarios libres del dia elegido, para el servicio que el turno ya tiene.
+  useEffect(() => {
+    if (!editando || !nuevaFecha) { setHorariosDia([]); return; }
+    let cancelado = false;
+    setCargandoHorarios(true);
+    api.get(`/api/turnos/disponibilidad/${nuevaFecha}/${editando.servicio_id}`)
+      .then(res => { if (!cancelado) setHorariosDia(res.data.horarios || []); })
+      .catch(() => { if (!cancelado) setHorariosDia([]); })
+      .finally(() => { if (!cancelado) setCargandoHorarios(false); });
+    return () => { cancelado = true; };
+  }, [editando, nuevaFecha]);
+
+  const abrirEdicion = (turno) => {
+    setEditando(turno);
+    setNuevaFecha('');
+    setHorariosDia([]);
     setError('');
     setMensaje('');
+  };
+
+  const cerrarEdicion = () => {
+    setEditando(null);
+    setNuevaFecha('');
+    setHorariosDia([]);
+  };
+
+  const confirmarCambio = async (hora) => {
+    setGuardando(true);
+    setError('');
+    try {
+      await api.patch(`/api/turnos/${editando.id}`, {
+        token: editando.token_acceso,
+        nueva_fecha: nuevaFecha,
+        nueva_hora_inicio: hora
+      });
+      cerrarEdicion();
+      setMensaje('Listo, cambiamos tu turno. Te mandamos la confirmación por WhatsApp.');
+      await buscarTurnos();
+    } catch (err) {
+      setError(err.response?.data?.error || 'No pudimos cambiar el turno. Probá de nuevo.');
+    } finally {
+      setGuardando(false);
+    }
+  };
+ 
+  // La busqueda en si, sin el submit: tambien se usa para refrescar despues de
+  // cancelar o cambiar un turno.
+  const buscarTurnos = async () => {
     setLoading(true);
     try {
       const res = await api.get(`/api/turnos/mistura/${telefono}/${apellido}`);
@@ -31,6 +102,13 @@ export default function MisTurnosPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBuscar = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMensaje('');
+    await buscarTurnos();
   };
  
   // Agrupa los turnos: los que comparten grupo_reserva se muestran como un solo bloque.
@@ -238,14 +316,75 @@ export default function MisTurnosPage() {
                     Confirmado
                   </span>
                 </div>
-                {puedeCancelar && (
-                  <div className="mt-4 pt-3 border-t border-[#F5D9E4]">
+                {puedeCancelar && editando?.id !== turno.id && (
+                  <div className="mt-4 pt-3 border-t border-[#F5D9E4] flex items-center gap-4">
+                    <button
+                      onClick={() => abrirEdicion(turno)}
+                      className="text-sm text-[#E6005C] hover:underline transition-colors cursor-pointer"
+                    >
+                      Cambiar fecha y hora
+                    </button>
                     <button
                       onClick={() => handleCancelar(turno)}
                       className="text-sm text-[#C47070] hover:text-red-700 transition-colors cursor-pointer"
                     >
                       Cancelar turno
                     </button>
+                  </div>
+                )}
+
+                {editando?.id === turno.id && (
+                  <div className="mt-4 pt-4 border-t border-[#F5D9E4] animate-fade-up">
+                    {!nuevaFecha ? (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="font-medium text-[#3A3A3A]">Elegí la fecha nueva</p>
+                          <button onClick={cerrarEdicion} className="text-xs text-[#8A8580] hover:underline cursor-pointer">Cancelar</button>
+                        </div>
+                        <CalendarioFechas
+                          rangos={horariosConfig.filter(h => h.profesional_id === turno.profesional_id)}
+                          bloqueosDiaCompleto={bloqueosDiaCompleto}
+                          onElegir={setNuevaFecha}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <p className="font-medium text-[#3A3A3A] capitalize">
+                              {format(new Date(nuevaFecha + 'T12:00:00'), "EEEE d 'de' MMMM", { locale: es })}
+                            </p>
+                            <p className="text-xs text-[#8A8580]">Elegí el horario</p>
+                          </div>
+                          <button onClick={() => setNuevaFecha('')} className="text-xs text-[#E6005C] hover:underline cursor-pointer">Cambiar fecha</button>
+                        </div>
+
+                        {cargandoHorarios ? (
+                          <p className="text-sm text-[#8A8580] py-3">Buscando horarios...</p>
+                        ) : horariosDia.length === 0 ? (
+                          <p className="text-sm text-[#8A8580] py-3">
+                            No quedan horarios libres ese día. Probá con otra fecha.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                            {horariosDia.map(h => (
+                              <button
+                                key={h.hora_inicio}
+                                onClick={() => confirmarCambio(h.hora_inicio)}
+                                disabled={guardando}
+                                className="py-2 rounded-lg text-sm font-medium bg-white border border-[#F5D9E4] text-[#3A3A3A] hover:border-[#E6005C] hover:bg-[#FDEFF5] cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                              >
+                                {h.hora_inicio}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-xs text-[#8A8580] mt-3">
+                          Tocá un horario para confirmar el cambio. El servicio y los extras quedan igual.
+                        </p>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
