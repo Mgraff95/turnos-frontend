@@ -35,6 +35,7 @@ export default function AdminPage() {
   const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '', profesional_id: '' });
   const [editandoBloque, setEditandoBloque] = useState(null);
   const [nuevoRango, setNuevoRango] = useState({ dia_semana: 0, hora_inicio: '09:00', hora_fin: '13:00', espacio_entre_turnos_min: 10 });
+  const [nuevaExcepcion, setNuevaExcepcion] = useState({ fecha: '', hora_inicio: '09:00', hora_fin: '20:00', espacio_entre_turnos_min: 10 });
   const [mostrarFormTurno, setMostrarFormTurno] = useState(false);
   const [turnoManual, setTurnoManual] = useState({ nombre: '', apellido: '', telefono: '', servicios_ids: [], fecha: '', hora_inicio: '', notificar: true });
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
@@ -277,6 +278,22 @@ export default function AdminPage() {
  
   const handleCrearRango = async (e) => { e.preventDefault(); if (!profHorarios) { showErr('Elegí una profesional'); return; } try { await api.post('/api/horarios', { ...nuevoRango, profesional_id: profHorarios }, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
+  // Una excepcion es una fila de horarios_config con fecha: ese dia se atiende
+  // lo que diga, en vez del horario de siempre.
+  const handleCrearExcepcion = async (e) => {
+    e.preventDefault();
+    if (!profHorarios) { showErr('Elegí una profesional'); return; }
+    if (!nuevaExcepcion.fecha) { showErr('Elegí la fecha'); return; }
+    try {
+      await api.post('/api/horarios', { ...nuevaExcepcion, profesional_id: profHorarios }, headers());
+      setNuevaExcepcion({ fecha: '', hora_inicio: '09:00', hora_fin: '20:00', espacio_entre_turnos_min: 10 });
+      showMsg('Horario especial agregado');
+      loadHorarios();
+    } catch (err) {
+      showErr(err.response?.data?.error || 'Error');
+    }
+  };
+
   const handleEliminarRango = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api.delete(`/api/horarios/${id}`, headers()); showMsg('Eliminado'); loadHorarios(); } catch (err) { showErr('Error'); } };
  
   const handleCrearBloque = async (e) => {
@@ -449,7 +466,16 @@ export default function AdminPage() {
   const turnosHoy = turnos.filter(t => t.fecha.split('T')[0] === hoyStr && t.estado === 'confirmado');
   // Solo la agenda que se esta viendo: cada profesional tiene sus propios
   // rangos y su propio espacio entre turnos.
-  const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => h.dia_semana === idx && h.profesional_id === profHorarios); });
+  const horariosPorDia2 = {}; DIAS.forEach((_, idx) => { horariosPorDia2[idx] = horarios.filter(h => !h.fecha && h.dia_semana === idx && h.profesional_id === profHorarios); });
+  // Dias puntuales con horario especial, de hoy en adelante y de la agenda que
+  // se esta viendo. Agrupados por fecha porque una fecha puede tener varias franjas.
+  const excepcionesPorFecha = horarios
+    .filter(h => h.fecha && h.profesional_id === profHorarios && String(h.fecha).split('T')[0] >= hoyStr)
+    .reduce((acc, h) => {
+      const f = String(h.fecha).split('T')[0];
+      (acc[f] = acc[f] || []).push(h);
+      return acc;
+    }, {});
  
   const opcionesHoraEdit = (() => {
     if (!editandoTurno) return [];
@@ -1029,6 +1055,57 @@ export default function AdminPage() {
             <button type="submit" className="btn-primary">Agregar</button>
           </form>
         </div>
+        {/* Horario especial para una fecha puntual. Reemplaza al semanal ese dia. */}
+        <div className="card mb-6">
+          <h3 className="font-semibold mb-1 text-[#8B6F5E]">📅 Horario especial para una fecha</h3>
+          <p className="text-xs text-[#A89585] mb-4">
+            Para un día puntual en el que {profesionales.find(p => p.id === profHorarios)?.nombre ?? 'ella'} atiende
+            distinto. Reemplaza al horario de siempre solo ese día: sirve para alargarlo, acortarlo,
+            o abrir un día que normalmente está cerrado. Para cerrar, usá Bloqueos.
+          </p>
+          <form onSubmit={handleCrearExcepcion} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+            <div>
+              <label className="text-xs text-[#A89585] mb-1 block">Fecha</label>
+              <input type="date" value={nuevaExcepcion.fecha} onChange={e => setNuevaExcepcion({...nuevaExcepcion, fecha: e.target.value})} min={hoyStr} className="input-field" required />
+            </div>
+            <div>
+              <label className="text-xs text-[#A89585] mb-1 block">Desde</label>
+              <input type="time" value={nuevaExcepcion.hora_inicio} onChange={e => setNuevaExcepcion({...nuevaExcepcion, hora_inicio: e.target.value})} className="input-field" required />
+            </div>
+            <div>
+              <label className="text-xs text-[#A89585] mb-1 block">Hasta</label>
+              <input type="time" value={nuevaExcepcion.hora_fin} onChange={e => setNuevaExcepcion({...nuevaExcepcion, hora_fin: e.target.value})} className="input-field" required />
+            </div>
+            <div>
+              <label className="text-xs text-[#A89585] mb-1 block">Espacio (min)</label>
+              <input type="number" value={nuevaExcepcion.espacio_entre_turnos_min} onChange={e => setNuevaExcepcion({...nuevaExcepcion, espacio_entre_turnos_min: parseInt(e.target.value)||0})} className="input-field" />
+            </div>
+            <button type="submit" className="btn-primary">Agregar</button>
+          </form>
+
+          {Object.keys(excepcionesPorFecha).length > 0 && (
+            <div className="mt-5 space-y-3">
+              {Object.entries(excepcionesPorFecha).sort().map(([fecha, rangos]) => (
+                <div key={fecha} className="bg-[#F5F0EB] rounded-lg p-3">
+                  <p className="font-semibold text-sm text-[#8B6F5E] capitalize mb-2">
+                    {format(fechaLocal(fecha), "EEEE d 'de' MMMM", { locale: es })}
+                    <span className="ml-2 text-xs font-normal text-[#A89585]">reemplaza al horario de siempre</span>
+                  </p>
+                  <div className="space-y-2">
+                    {rangos.map(r => (
+                      <div key={r.id} className="flex items-center gap-3 text-sm">
+                        <span className="text-[#3A3A3A]">{r.hora_inicio} → {r.hora_fin}</span>
+                        <span className="text-xs text-[#A89585]">espacio {r.espacio_entre_turnos_min} min</span>
+                        <button onClick={() => handleEliminarRango(r.id)} className="ml-auto text-sm text-[#C47070] hover:underline cursor-pointer">Eliminar</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="space-y-4">{DIAS.map((dia, idx) => (
           <div key={idx} className="card">
             <h4 className="font-semibold text-[#8B6F5E] mb-3">{dia}</h4>

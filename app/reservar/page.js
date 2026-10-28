@@ -142,13 +142,24 @@ const [nombre, setNombre] = useState('');
   const hoy = startOfToday();
 
   // La profesional de la reserva: sus dias son los que se pueden elegir.
-  const diasHabilitados = (() => {
+  const rangosDeLaProfesional = (() => {
     const prof = serviciosSeleccionados[0]?.profesional_id ?? null;
-    const rangos = prof === null
+    return prof === null
       ? horariosConfig
       : horariosConfig.filter(h => h.profesional_id === prof);
-    return [...new Set(rangos.map(h => h.dia_semana))];
   })();
+
+  // Los dias de semana abiertos salen SOLO del horario de siempre. Una
+  // excepcion en domingo abre ESE domingo, no todos los domingos.
+  const diasHabilitados = [
+    ...new Set(rangosDeLaProfesional.filter(h => !h.fecha).map(h => h.dia_semana))
+  ];
+
+  // Fechas puntuales con horario especial: se abren aunque ese dia de semana
+  // normalmente este cerrado.
+  const fechasConExcepcion = new Set(
+    rangosDeLaProfesional.filter(h => h.fecha).map(h => String(h.fecha).split('T')[0])
+  );
 
   // Un turno no se puede reservar con menos de 24 horas. Si TODO el dia cae
   // dentro de esa ventana, el dia se apaga. El backend filtra igual slot por
@@ -157,8 +168,10 @@ const [nombre, setNombre] = useState('');
   const limiteMinimo = new Date(Date.now() + HORAS_MINIMAS * 60 * 60 * 1000);
 
   const diaSeleccionable = (dia) => {
-    if (!diasHabilitados.includes(diaJsToDB(dia.getDay()))) return false;
     const fechaStr = format(dia, 'yyyy-MM-dd');
+    const abierto = fechasConExcepcion.has(fechaStr)
+      || diasHabilitados.includes(diaJsToDB(dia.getDay()));
+    if (!abierto) return false;
     if (bloqueosDiaCompleto.includes(fechaStr)) return false;
     // El final del dia, generoso: si ni a las 23:59 se llega al minimo, no hay
     // ningun horario posible.
