@@ -17,6 +17,14 @@ export default function ReservarPage() {
   const [fechaSeleccionada, setFechaSeleccionada] = useState('');
   const [horaSeleccionada, setHoraSeleccionada] = useState('');
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
+  // Un 409 al confirmar significa que el horario ya no sirve: lo tomaron, o
+  // choca con la agenda de la otra profesional. Es el unico error del que se
+  // puede volver sola, asi que se le ofrece el camino de vuelta.
+  const [errorDeHorario, setErrorDeHorario] = useState(false);
+  // Se incrementa para volver a pedir los horarios cuando ella vuelve al paso
+  // 3: el efecto mira la fecha y los servicios, que no cambiaron, asi que sin
+  // esto le mostraria la misma lista de antes.
+  const [recargaHorarios, setRecargaHorarios] = useState(0);
 const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
@@ -109,7 +117,7 @@ const [nombre, setNombre] = useState('');
         .finally(finalizar);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaSeleccionada, serviciosSeleccionados, extrasElegidos]);
+  }, [fechaSeleccionada, serviciosSeleccionados, extrasElegidos, recargaHorarios]);
  
   // Todos los rangos, con su profesional: los dias abiertos dependen de QUIEN
   // atiende. Antes se mezclaban las dos agendas y se ofrecian dias que esa
@@ -381,6 +389,7 @@ setServiciosSeleccionados(prev =>
  
   const handleSubmit = async () => {
     setError('');
+    setErrorDeHorario(false);
     setLoading(true);
     try {
       // Si Daniela tiene el cobro activado, el turno NO se crea acá: se crea
@@ -429,6 +438,9 @@ setServiciosSeleccionados(prev =>
       setStep(5);
     } catch (err) {
       setError(err.response?.data?.error || 'Error al reservar. Intentá de nuevo.');
+      // El backend ya explica QUE choca y que hay que mover; lo unico que
+      // falta es el boton para hacerlo.
+      setErrorDeHorario(err.response?.status === 409);
     } finally {
       setLoading(false);
     }
@@ -629,6 +641,19 @@ setServiciosSeleccionados(prev =>
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-6 text-sm">
           {error}
+          {errorDeHorario && (
+            <button
+              onClick={() => {
+                setError('');
+                setErrorDeHorario(false);
+                setHoraSeleccionada('');
+                setRecargaHorarios(n => n + 1);
+                setStep(3);
+              }}
+              className="block mt-2 font-semibold underline cursor-pointer">
+              Elegir otro horario
+            </button>
+          )}
         </div>
       )}
  
