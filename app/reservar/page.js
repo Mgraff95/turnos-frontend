@@ -149,17 +149,16 @@ const [nombre, setNombre] = useState('');
       : horariosConfig.filter(h => h.profesional_id === prof);
   })();
 
-  // Los dias de semana abiertos salen SOLO del horario de siempre. Una
-  // excepcion en domingo abre ESE domingo, no todos los domingos.
-  const diasHabilitados = [
-    ...new Set(rangosDeLaProfesional.filter(h => !h.fecha).map(h => h.dia_semana))
-  ];
-
-  // Fechas puntuales con horario especial: se abren aunque ese dia de semana
-  // normalmente este cerrado.
-  const fechasConExcepcion = new Set(
-    rangosDeLaProfesional.filter(h => h.fecha).map(h => String(h.fecha).split('T')[0])
-  );
+  // Los rangos que aplican a un dia concreto. Espeja rangosQueAplican del
+  // backend: si hay excepcion para esa fecha, la excepcion REEMPLAZA al horario
+  // semanal. Una excepcion en domingo abre ESE domingo, no todos los domingos.
+  const rangosDelDia = (dia, fechaStr) => {
+    const excepciones = rangosDeLaProfesional.filter(
+      h => h.fecha && String(h.fecha).split('T')[0] === fechaStr
+    );
+    if (excepciones.length > 0) return excepciones;
+    return rangosDeLaProfesional.filter(h => !h.fecha && h.dia_semana === diaJsToDB(dia.getDay()));
+  };
 
   // Un turno no se puede reservar con menos de 24 horas. Si TODO el dia cae
   // dentro de esa ventana, el dia se apaga. El backend filtra igual slot por
@@ -169,14 +168,22 @@ const [nombre, setNombre] = useState('');
 
   const diaSeleccionable = (dia) => {
     const fechaStr = format(dia, 'yyyy-MM-dd');
-    const abierto = fechasConExcepcion.has(fechaStr)
-      || diasHabilitados.includes(diaJsToDB(dia.getDay()));
-    if (!abierto) return false;
+
+    // Sin rangos ese dia, no se atiende: eso cubre tanto el dia de semana
+    // cerrado como la ausencia de excepcion.
+    const rangos = rangosDelDia(dia, fechaStr);
+    if (rangos.length === 0) return false;
+
     if (bloqueosDiaCompleto.includes(fechaStr)) return false;
-    // El final del dia, generoso: si ni a las 23:59 se llega al minimo, no hay
-    // ningun horario posible.
-    const finDelDia = new Date(dia.getFullYear(), dia.getMonth(), dia.getDate(), 23, 59);
-    return finDelDia > limiteMinimo;
+
+    // Contra el CIERRE REAL del dia, no contra las 23:59. Si el estudio cierra
+    // a las 17:00, un dia cuyo cierre ya cae dentro de las 24 horas no tiene
+    // ningun turno posible, y mostrarlo habilitado para que al tocarlo aparezca
+    // vacio es peor que apagarlo.
+    const ultimoCierre = rangos.map(r => r.hora_fin).sort().pop();
+    const [hh, mm] = ultimoCierre.split(':').map(Number);
+    const cierre = new Date(dia.getFullYear(), dia.getMonth(), dia.getDate(), hh, mm);
+    return cierre > limiteMinimo;
   };
 
   // Grilla del mes visible, arrancando en lunes.
