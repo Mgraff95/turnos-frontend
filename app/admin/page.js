@@ -29,6 +29,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
+  const AYUDA_CAMILLA = 'Hay una sola camilla en el estudio: dos servicios que la usan no pueden darse a la misma hora, ni siquiera siendo de profesionales distintas. Las uñas no la usan.';
   const SERVICIO_VACIO = { nombre: '', duracion_minutos: 30, precio_pesos: '', profesional_id: '', comision_pct: '', usa_camilla: false, intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' };
   const [nuevoServicio, setNuevoServicio] = useState(SERVICIO_VACIO);
   const [editandoServicio, setEditandoServicio] = useState(null);
@@ -828,10 +829,10 @@ export default function AdminPage() {
             </div>
             <div className="border-t border-[#F5F0EB] pt-4">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={nuevoServicio.usa_camilla} onChange={e => setNuevoServicio({...nuevoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                <input type="checkbox" aria-describedby="ayuda-camilla-nuevo" checked={nuevoServicio.usa_camilla} onChange={e => setNuevoServicio({...nuevoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
                 <span className="text-sm font-medium text-[#8B6F5E]">Usa la camilla</span>
               </label>
-              <p className="text-xs text-[#A89585] mt-1 pl-6">Hay una sola camilla en el estudio: dos servicios que la usan no pueden darse a la misma hora, ni siquiera siendo de profesionales distintas. Las uñas no la usan.</p>
+              <p id="ayuda-camilla-nuevo" className="text-xs text-[#A89585] mt-1 pl-6">{AYUDA_CAMILLA}</p>
             </div>
             <div className="border-t border-[#F5F0EB] pt-4">
               <label className="flex items-center gap-2 cursor-pointer mb-3">
@@ -890,10 +891,10 @@ export default function AdminPage() {
               </div>
               <div className="border-t border-[#F5F0EB] pt-4">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={!!editandoServicio.usa_camilla} onChange={e => setEditandoServicio({...editandoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                  <input type="checkbox" aria-describedby="ayuda-camilla-editar" checked={!!editandoServicio.usa_camilla} onChange={e => setEditandoServicio({...editandoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
                   <span className="text-sm font-medium text-[#8B6F5E]">Usa la camilla</span>
                 </label>
-                <p className="text-xs text-[#A89585] mt-1 pl-6">Hay una sola camilla en el estudio: dos servicios que la usan no pueden darse a la misma hora, ni siquiera siendo de profesionales distintas. Las uñas no la usan.</p>
+                <p id="ayuda-camilla-editar" className="text-xs text-[#A89585] mt-1 pl-6">{AYUDA_CAMILLA}</p>
               </div>
               <div className="border-t border-[#F5F0EB] pt-4">
                 <label className="flex items-center gap-2 cursor-pointer mb-3">
@@ -940,18 +941,18 @@ export default function AdminPage() {
                 {s.incluye_nota && s.nota && (
                   <p className="text-xs text-[#6B8F6B] font-medium mt-1">✨ {s.nota}</p>
                 )}
-                {s.usa_camilla && (
+                {(s.usa_camilla || s.intercalable) && (
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🛏️ Usa la camilla</span>
-                  </div>
-                )}
-                {s.intercalable && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {s.usa_camilla && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🛏️ Usa la camilla</span>
+                    )}
+                    {s.intercalable && (<>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🔀 Intercalable desde min {s.intercalar_desde_min ?? 0}</span>
                     {Array.isArray(s.servicios_compatibles) && s.servicios_compatibles.length > 0 && (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">Con: {s.servicios_compatibles.map(id => servicios.find(x => x.id === id)?.nombre).filter(Boolean).join(', ')}</span>
                     )}
                     {s.max_simultaneos > 1 && (<span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">Máx {s.max_simultaneos} a la vez</span>)}
+                    </>)}
                   </div>
                 )}
               </div>

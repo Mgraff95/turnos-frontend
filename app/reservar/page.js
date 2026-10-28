@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import api from '@/lib/api';
 import { format, addDays, startOfToday } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -25,6 +25,13 @@ export default function ReservarPage() {
   // 3: el efecto mira la fecha y los servicios, que no cambiaron, asi que sin
   // esto le mostraria la misma lista de antes.
   const [recargaHorarios, setRecargaHorarios] = useState(0);
+  // El mensaje del choque la acompaña al paso 3. Borrarlo al mandarla a
+  // elegir otro horario era quitarle el cartel justo cuando iba a actuar
+  // sobre el: en el caso de "ya tenes un turno con la otra profesional" la
+  // grilla vuelve IGUAL (la disponibilidad no sabe quien es ella), asi que
+  // sin el mensaje lo mas natural es volver a tocar la misma hora.
+  const [avisoHorario, setAvisoHorario] = useState('');
+  const cajaError = useRef(null);
 const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
@@ -88,6 +95,21 @@ const [nombre, setNombre] = useState('');
       extras: (extrasElegidos[s.id] || []).map(e => e.id),
     }));
  
+  // El cartel rojo pertenece a un intento concreto de confirmar: cualquier
+  // movimiento por el wizard lo deja sin sentido. Un solo lugar y no uno por
+  // boton, para que no se escape el proximo que se agregue.
+  useEffect(() => {
+    setError('');
+    setErrorDeHorario(false);
+  }, [step]);
+
+  // Que no se le dispare abajo de la pantalla: el boton de confirmar esta al
+  // final de un formulario largo, y el cartel aparece arriba de todo. En el
+  // telefono se quedaba sin ver nada mas que el spinner apagandose.
+  useEffect(() => {
+    if (error) cajaError.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [error]);
+
   // Disponibilidad: 1 servicio usa el endpoint clásico; 2+ usa el de bloque
   useEffect(() => {
     if (!fechaSeleccionada || serviciosSeleccionados.length === 0) return;
@@ -378,7 +400,17 @@ setServiciosSeleccionados(prev =>
   const idxPaso = Math.max(0, ordenPasos.indexOf(step));
   const totalPasos = ordenPasos.length;
  
+  // Vuelve al paso 3 LLEVANDO el mensaje: es el que le dice cual de los dos
+  // turnos mover. Y fuerza a pedir los horarios de nuevo, porque la fecha y
+  // los servicios no cambiaron y el efecto no se enteraria solo.
+  const volverAElegirHorario = () => {
+    setAvisoHorario(error);
+    setRecargaHorarios(n => n + 1);
+    setStep(3);
+  };
+
   const volverAServicios = () => {
+    setAvisoHorario('');
     setStep(1);
     setFechaSeleccionada('');
     setHoraSeleccionada('');
@@ -390,6 +422,7 @@ setServiciosSeleccionados(prev =>
   const handleSubmit = async () => {
     setError('');
     setErrorDeHorario(false);
+    setAvisoHorario('');
     setLoading(true);
     try {
       // Si Daniela tiene el cobro activado, el turno NO se crea acá: se crea
@@ -639,20 +672,25 @@ setServiciosSeleccionados(prev =>
       </div>
  
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-6 text-sm">
+        <div
+          ref={cajaError}
+          role="alert"
+          className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-6 text-sm">
           {error}
           {errorDeHorario && (
-            <button
-              onClick={() => {
-                setError('');
-                setErrorDeHorario(false);
-                setHoraSeleccionada('');
-                setRecargaHorarios(n => n + 1);
-                setStep(3);
-              }}
-              className="block mt-2 font-semibold underline cursor-pointer">
-              Elegir otro horario
-            </button>
+            <div className="flex flex-wrap gap-x-4 mt-2">
+              <button type="button" onClick={volverAElegirHorario} className="font-semibold underline cursor-pointer">
+                Elegir otro horario
+              </button>
+              {esMulti && (
+                // Con varios servicios el bloque se mueve entero, asi que
+                // "otro horario para alguno de los servicios" en realidad se
+                // resuelve sacando uno y reservandolo aparte.
+                <button type="button" onClick={volverAServicios} className="font-semibold underline cursor-pointer">
+                  Cambiar los servicios
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -863,6 +901,11 @@ setServiciosSeleccionados(prev =>
       {/* STEP 3: Elegir fecha y hora */}
       {step === 3 && (
         <div className="animate-fade-up">
+          {avisoHorario && (
+            <div className="bg-[#FDEFF5] border border-[#F5D9E4] text-[#8A3A5C] p-3 rounded-lg mb-4 text-sm">
+              {avisoHorario}
+            </div>
+          )}
           <div className="card mb-4 flex items-center justify-between">
             <div>
               <p className="text-sm text-[#8A8580]">{esMulti ? 'Servicios elegidos' : 'Servicio elegido'}</p>
