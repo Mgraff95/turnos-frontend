@@ -29,7 +29,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
-  const SERVICIO_VACIO = { nombre: '', duracion_minutos: 30, precio_pesos: '', profesional_id: '', comision_pct: '', intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' };
+  const SERVICIO_VACIO = { nombre: '', duracion_minutos: 30, precio_pesos: '', profesional_id: '', comision_pct: '', usa_camilla: false, intercalable: false, intercalar_desde_min: 30, servicios_compatibles: [], max_simultaneos: 2, incluye_nota: false, nota: '' };
   const [nuevoServicio, setNuevoServicio] = useState(SERVICIO_VACIO);
   const [editandoServicio, setEditandoServicio] = useState(null);
   const [nuevoBloque, setNuevoBloque] = useState({ fecha: '', motivo: '', todoElDia: true, hora_inicio: '', hora_fin: '', profesional_id: '' });
@@ -274,7 +274,7 @@ export default function AdminPage() {
     } catch (err) { showErr(err.response?.data?.error || 'Error'); }
   };
   const handleDesactivarServicio = async (id) => { if (!confirm('¿Desactivar este servicio? Ya no aparecerá para reservas.')) return; try { await api.patch(`/api/servicios/${id}`, { activo: false }, headers()); showMsg('Servicio desactivado'); loadServicios(); } catch (err) { showErr('Error al desactivar'); } };
-  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), profesional_id: parseInt(editandoServicio.profesional_id), comision_pct: editandoServicio.comision_pct === '' || editandoServicio.comision_pct === null || editandoServicio.comision_pct === undefined ? null : parseFloat(editandoServicio.comision_pct), intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
+  const handleEditarServicio = async (e) => { e.preventDefault(); try { await api.patch(`/api/servicios/${editandoServicio.id}`, { nombre: editandoServicio.nombre, duracion_minutos: parseInt(editandoServicio.duracion_minutos), precio_pesos: parseFloat(editandoServicio.precio_pesos), profesional_id: parseInt(editandoServicio.profesional_id), comision_pct: editandoServicio.comision_pct === '' || editandoServicio.comision_pct === null || editandoServicio.comision_pct === undefined ? null : parseFloat(editandoServicio.comision_pct), usa_camilla: !!editandoServicio.usa_camilla, intercalable: !!editandoServicio.intercalable, intercalar_desde_min: parseInt(editandoServicio.intercalar_desde_min) || 0, servicios_compatibles: Array.isArray(editandoServicio.servicios_compatibles) ? editandoServicio.servicios_compatibles.map(n => parseInt(n)) : [], max_simultaneos: parseInt(editandoServicio.max_simultaneos) || 2, incluye_nota: !!editandoServicio.incluye_nota, nota: editandoServicio.nota || null }, headers()); setEditandoServicio(null); showMsg('Servicio actualizado'); loadServicios(); } catch (err) { showErr('Error al actualizar'); } };
  
   const handleCrearRango = async (e) => { e.preventDefault(); if (!profHorarios) { showErr('Elegí una profesional'); return; } try { await api.post('/api/horarios', { ...nuevoRango, profesional_id: profHorarios }, headers()); showMsg(`Rango agregado a ${DIAS[nuevoRango.dia_semana]}`); loadHorarios(); } catch (err) { showErr('Error'); } };
   const handleEditarRango = async (id, campo, valor) => { try { await api.patch(`/api/horarios/${id}`, { [campo]: valor }, headers()); showMsg('Actualizado'); loadHorarios(); } catch (err) { showErr('Error'); } };
@@ -827,6 +827,13 @@ export default function AdminPage() {
               )}
             </div>
             <div className="border-t border-[#F5F0EB] pt-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={nuevoServicio.usa_camilla} onChange={e => setNuevoServicio({...nuevoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                <span className="text-sm font-medium text-[#8B6F5E]">Usa la camilla</span>
+              </label>
+              <p className="text-xs text-[#A89585] mt-1 pl-6">Hay una sola camilla en el estudio: dos servicios que la usan no pueden darse a la misma hora, ni siquiera siendo de profesionales distintas. Las uñas no la usan.</p>
+            </div>
+            <div className="border-t border-[#F5F0EB] pt-4">
               <label className="flex items-center gap-2 cursor-pointer mb-3">
                 <input type="checkbox" checked={nuevoServicio.intercalable} onChange={e => setNuevoServicio({...nuevoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
                 <span className="text-sm font-medium text-[#8B6F5E]">Permitir intercalar con otros servicios</span>
@@ -882,6 +889,13 @@ export default function AdminPage() {
                 )}
               </div>
               <div className="border-t border-[#F5F0EB] pt-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!editandoServicio.usa_camilla} onChange={e => setEditandoServicio({...editandoServicio, usa_camilla: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
+                  <span className="text-sm font-medium text-[#8B6F5E]">Usa la camilla</span>
+                </label>
+                <p className="text-xs text-[#A89585] mt-1 pl-6">Hay una sola camilla en el estudio: dos servicios que la usan no pueden darse a la misma hora, ni siquiera siendo de profesionales distintas. Las uñas no la usan.</p>
+              </div>
+              <div className="border-t border-[#F5F0EB] pt-4">
                 <label className="flex items-center gap-2 cursor-pointer mb-3">
                   <input type="checkbox" checked={!!editandoServicio.intercalable} onChange={e => setEditandoServicio({...editandoServicio, intercalable: e.target.checked})} className="w-4 h-4 accent-[#8B6F5E]" />
                   <span className="text-sm font-medium text-[#8B6F5E]">Permitir intercalar con otros servicios</span>
@@ -925,6 +939,11 @@ export default function AdminPage() {
                 </p>
                 {s.incluye_nota && s.nota && (
                   <p className="text-xs text-[#6B8F6B] font-medium mt-1">✨ {s.nota}</p>
+                )}
+                {s.usa_camilla && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#F5F0EB] text-[#8B6F5E]">🛏️ Usa la camilla</span>
+                  </div>
                 )}
                 {s.intercalable && (
                   <div className="flex flex-wrap gap-1 mt-1.5">
