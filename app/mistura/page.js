@@ -16,14 +16,21 @@ export default function MisTurnosPage() {
   const [error, setError] = useState('');
   const [mensaje, setMensaje] = useState('');
 
-  // ── Cambiar fecha y hora de un turno ──
-  // Solo fecha y hora: el servicio no cambia, asi que los extras, el precio y
-  // la profesional quedan intactos y no hay nada que se pueda perder.
+  // ── Cambiar un turno ──
+  // Fecha, hora y servicio. Si cambia el servicio puede cambiar la duracion, el
+  // precio, quien atiende y los extras que siguen valiendo, asi que antes de
+  // confirmar se le muestra todo eso: la cuenta la hace el backend.
   const [editando, setEditando] = useState(null);
+  const [nuevoServicioId, setNuevoServicioId] = useState('');
+  const [preview, setPreview] = useState(null);
   const [nuevaFecha, setNuevaFecha] = useState('');
   const [horariosDia, setHorariosDia] = useState([]);
   const [cargandoHorarios, setCargandoHorarios] = useState(false);
   const [guardando, setGuardando] = useState(false);
+
+  // Los servicios activos, para el selector. Traen su profesional, asi que se
+  // pueden agrupar como en la pagina de reservar.
+  const [servicios, setServicios] = useState([]);
 
   // Para pintar el calendario: los rangos de atencion y los dias cerrados.
   const [horariosConfig, setHorariosConfig] = useState([]);
@@ -40,22 +47,45 @@ export default function MisTurnosPage() {
           .map(b => String(b.fecha).split('T')[0])
       ))
       .catch(() => {});
+    api.get('/api/servicios')
+      .then(res => setServicios(res.data || []))
+      .catch(() => {});
   }, []);
 
-  // Horarios libres del dia elegido, para el servicio que el turno ya tiene.
+  // Horarios libres del dia elegido, para el servicio ELEGIDO (que puede no ser
+  // el que el turno tiene) y excluyendo este mismo turno: su propio horario no
+  // puede taparse a si mismo, o cambiar de servicio dejando el mismo dia y la
+  // misma hora seria imposible.
   useEffect(() => {
     if (!editando || !nuevaFecha) { setHorariosDia([]); return; }
     let cancelado = false;
     setCargandoHorarios(true);
-    api.get(`/api/turnos/disponibilidad/${nuevaFecha}/${editando.servicio_id}`)
+    const servicioId = nuevoServicioId || editando.servicio_id;
+    api.get(`/api/turnos/disponibilidad/${nuevaFecha}/${servicioId}?excluir_turno_id=${editando.id}&token=${editando.token_acceso}`)
       .then(res => { if (!cancelado) setHorariosDia(res.data.horarios || []); })
       .catch(() => { if (!cancelado) setHorariosDia([]); })
       .finally(() => { if (!cancelado) setCargandoHorarios(false); });
     return () => { cancelado = true; };
-  }, [editando, nuevaFecha]);
+  }, [editando, nuevaFecha, nuevoServicioId]);
+
+  // Que le queda si cambia el servicio. Solo se pide cuando eligio uno distinto
+  // del que ya tiene.
+  useEffect(() => {
+    if (!editando || !nuevoServicioId || String(nuevoServicioId) === String(editando.servicio_id)) {
+      setPreview(null);
+      return;
+    }
+    let cancelado = false;
+    api.get(`/api/turnos/${editando.id}/cambio-preview?token=${editando.token_acceso}&nuevo_servicio_id=${nuevoServicioId}`)
+      .then(res => { if (!cancelado) setPreview(res.data); })
+      .catch(() => { if (!cancelado) setPreview(null); });
+    return () => { cancelado = true; };
+  }, [editando, nuevoServicioId]);
 
   const abrirEdicion = (turno) => {
     setEditando(turno);
+    setNuevoServicioId(String(turno.servicio_id));
+    setPreview(null);
     setNuevaFecha('');
     setHorariosDia([]);
     setError('');
@@ -64,6 +94,8 @@ export default function MisTurnosPage() {
 
   const cerrarEdicion = () => {
     setEditando(null);
+    setNuevoServicioId('');
+    setPreview(null);
     setNuevaFecha('');
     setHorariosDia([]);
   };
@@ -75,7 +107,8 @@ export default function MisTurnosPage() {
       await api.patch(`/api/turnos/${editando.id}`, {
         token: editando.token_acceso,
         nueva_fecha: nuevaFecha,
-        nueva_hora_inicio: hora
+        nueva_hora_inicio: hora,
+        nuevo_servicio_id: nuevoServicioId || editando.servicio_id
       });
       cerrarEdicion();
       setMensaje('Listo, cambiamos tu turno. Te mandamos la confirmación por WhatsApp.');
@@ -322,7 +355,7 @@ export default function MisTurnosPage() {
                       onClick={() => abrirEdicion(turno)}
                       className="text-sm text-[#E6005C] hover:underline transition-colors cursor-pointer"
                     >
-                      Cambiar fecha y hora
+                      Cambiar turno
                     </button>
                     <button
                       onClick={() => handleCancelar(turno)}
@@ -338,11 +371,53 @@ export default function MisTurnosPage() {
                     {!nuevaFecha ? (
                       <>
                         <div className="flex items-center justify-between mb-3">
-                          <p className="font-medium text-[#3A3A3A]">Elegí la fecha nueva</p>
+                          <p className="font-medium text-[#3A3A3A]">Elegí el servicio y la fecha</p>
                           <button onClick={cerrarEdicion} className="text-xs text-[#8A8580] hover:underline cursor-pointer">Cancelar</button>
                         </div>
+
+                        {/* El servicio se puede cambiar. Si elige otro, la cuenta
+                            de lo que le queda la hace el backend y se muestra
+                            abajo: la duración, el precio, quién la atiende y los
+                            extras que no siguen valiendo. */}
+                        <label className="text-xs text-[#8A8580] mb-1 block">Servicio</label>
+                        <select
+                          value={nuevoServicioId}
+                          onChange={e => { setNuevoServicioId(e.target.value); setHorariosDia([]); }}
+                          className="w-full mb-3 px-3 py-2 rounded-xl border border-[#F5D9E4] text-sm text-[#3A3A3A] bg-white"
+                        >
+                          {Object.entries(
+                            servicios.reduce((acc, s) => {
+                              const nombre = s.profesional?.nombre || 'Otros';
+                              (acc[nombre] = acc[nombre] || []).push(s);
+                              return acc;
+                            }, {})
+                          ).map(([nombreProf, lista]) => (
+                            <optgroup key={nombreProf} label={nombreProf}>
+                              {lista.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  {s.nombre} · {s.duracion_minutos}min · ${Number(s.precio_pesos).toLocaleString('es-AR')}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+
+                        {preview && (
+                          <div className="mb-3 rounded-xl bg-[#FDF4F8] px-3 py-2 text-xs text-[#6B6560] space-y-1">
+                            <p>Te queda: <span className="font-medium text-[#3A3A3A]">{preview.duracion_minutos} min · ${Number(preview.precio).toLocaleString('es-AR')}</span></p>
+                            {String(preview.profesional.id) !== String(turno.profesional_id) && (
+                              <p>Te va a atender <span className="font-medium text-[#3A3A3A]">{preview.profesional.nombre}</span>.</p>
+                            )}
+                            {preview.extras_descartados.length > 0 && (
+                              <p className="text-[#C47070]">
+                                Con este servicio no van: {preview.extras_descartados.map(e => e.nombre).join(', ')}.
+                              </p>
+                            )}
+                          </div>
+                        )}
+
                         <CalendarioFechas
-                          rangos={horariosConfig.filter(h => h.profesional_id === turno.profesional_id)}
+                          rangos={horariosConfig.filter(h => h.profesional_id === (preview ? preview.profesional.id : turno.profesional_id))}
                           bloqueosDiaCompleto={bloqueosDiaCompleto}
                           onElegir={setNuevaFecha}
                         />
@@ -381,7 +456,10 @@ export default function MisTurnosPage() {
                         )}
 
                         <p className="text-xs text-[#8A8580] mt-3">
-                          Tocá un horario para confirmar el cambio. El servicio y los extras quedan igual.
+                          Tocá un horario para confirmar el cambio.
+                          {preview
+                            ? ` Te queda ${preview.servicio.nombre} · ${preview.duracion_minutos} min · $${Number(preview.precio).toLocaleString('es-AR')}.`
+                            : ' El servicio y los extras quedan igual.'}
                         </p>
                       </>
                     )}
