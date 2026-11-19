@@ -119,7 +119,20 @@ export default function AdminPage() {
     })();
     return () => { cancelado = true; };
   }, [turnoManual.servicios_ids]);
-  useEffect(() => { if (!editandoTurno?.fecha || !editandoTurno?.servicio_id) { setHorariosEditTurno([]); return; } api.get(`/api/turnos/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}?sin_minimo=1`).then(res => setHorariosEditTurno(res.data.horarios || [])).catch(() => setHorariosEditTurno([])); }, [editandoTurno?.fecha, editandoTurno?.servicio_id]);
+  // Los horarios se piden para la profesional ELEGIDA, que puede no ser la dueña
+  // del servicio: es una agenda distinta, con sus propios turnos y su propio
+  // horario de trabajo. Los extras entran porque alargan el turno.
+  useEffect(() => {
+    if (!editandoTurno?.fecha || !editandoTurno?.servicio_id || !editandoTurno?.profesional_id) { setHorariosEditTurno([]); return; }
+    const extras = (editandoTurno.extras_ids || []).join(',');
+    const query = `?excluir_turno_id=${editandoTurno.id}${extras ? `&extras=${extras}` : ''}`;
+    api.get(`/api/admin/disponibilidad/${editandoTurno.fecha}/${editandoTurno.servicio_id}/${editandoTurno.profesional_id}${query}`, headers())
+      .then(res => setHorariosEditTurno(res.data.horarios || []))
+      .catch(() => setHorariosEditTurno([]));
+    // `headers` se recrea en cada render y los extras del turno no cambian
+    // mientras se edita: incluirlos acá dispararía la consulta en loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editandoTurno?.fecha, editandoTurno?.servicio_id, editandoTurno?.profesional_id]);
   useEffect(() => { if (tab === 'clientes' && token) loadClientes(); }, [tab, token]);
   useEffect(() => { if (tab === 'waitlist' && token) loadWaitlist(); }, [tab, token]);
   useEffect(() => { if (tab === 'extras' && token) { loadExtras(); loadServicios(); } }, [tab, token]);
@@ -378,12 +391,12 @@ export default function AdminPage() {
  
   const handleAbrirEdicion = (turno) => {
     const fechaStr = turno.fecha.split('T')[0];
-    setEditandoTurno({ id: turno.id, nombre: turno.cliente_nombre, apellido: turno.cliente_apellido, telefono: turno.cliente_telefono, servicio_id: String(turno.servicio_id), fecha: fechaStr, hora_inicio: turno.hora_inicio, _origFecha: fechaStr, _origServicio: String(turno.servicio_id), _origHora: turno.hora_inicio });
+    setEditandoTurno({ id: turno.id, nombre: turno.cliente_nombre, apellido: turno.cliente_apellido, telefono: turno.cliente_telefono, servicio_id: String(turno.servicio_id), profesional_id: String(turno.profesional_id), extras_ids: turno.extras_ids || [], fecha: fechaStr, hora_inicio: turno.hora_inicio, grupo_reserva: turno.grupo_reserva || null, _origFecha: fechaStr, _origServicio: String(turno.servicio_id), _origHora: turno.hora_inicio });
   };
   const handleEditarTurno = async (e) => {
     e.preventDefault();
     try {
-      await api.patch(`/api/admin/turnos/${editandoTurno.id}`, { nombre: editandoTurno.nombre, apellido: editandoTurno.apellido, telefono: editandoTurno.telefono, servicio_id: editandoTurno.servicio_id, fecha: editandoTurno.fecha, hora_inicio: editandoTurno.hora_inicio }, headers());
+      await api.patch(`/api/admin/turnos/${editandoTurno.id}`, { nombre: editandoTurno.nombre, apellido: editandoTurno.apellido, telefono: editandoTurno.telefono, servicio_id: editandoTurno.servicio_id, profesional_id: editandoTurno.profesional_id, fecha: editandoTurno.fecha, hora_inicio: editandoTurno.hora_inicio }, headers());
       setEditandoTurno(null); setTurnoDetalle(null); showMsg('Turno actualizado'); loadTurnos();
     } catch (err) { showErr(err.response?.data?.error || 'Error al actualizar'); }
   };
@@ -478,15 +491,43 @@ export default function AdminPage() {
       return acc;
     }, {});
  
-  const opcionesHoraEdit = (() => {
-    if (!editandoTurno) return [];
-    const lista = [...horariosEditTurno];
-    const mismoContexto = editandoTurno._origFecha === editandoTurno.fecha && editandoTurno._origServicio === editandoTurno.servicio_id;
-    if (mismoContexto && editandoTurno._origHora && !lista.some(h => h.hora_inicio === editandoTurno._origHora)) {
-      lista.unshift({ hora_inicio: editandoTurno._origHora, hora_fin: '' });
-    }
-    return lista;
-  })();
+  // La liquidación se calcula en vivo sobre los campos congelados de cada turno,
+  // así que tocar un turno de un mes ya pasado cambia un número que Daniela
+  // quizá ya le compartió a la profesional. No se bloquea: se avisa.
+  const esDeMesAnterior = (fechaStr) => {
+    if (!fechaStr) return false;
+    const [anio, mes] = fechaStr.split('-').map(Number);
+    const hoy = new Date();
+    return anio < hoy.getFullYear() || (anio === hoy.getFullYear() && mes < hoy.getMonth() + 1);
+  };
+
+  // Cuando el turno queda en manos de quien no es la dueña del servicio, la
+  // pantalla tiene que decirlo: si no, un turno de Noemí que muestra un servicio
+  // de Daniela no se explica.
+  // Las opciones del select incluyen a la profesional que el turno ya tiene,
+  // aunque esté desactivada: si no, el select muestra seleccionada a otra y el
+  // formulario miente sobre quién atiende. Asignarle un turno a una inactiva
+  // sigue estando prohibido del lado del backend.
+  const profesionalesParaEditar = (edit) => {
+    const activas = profesionales.filter(p => p.activo);
+    const laDelTurno = profesionales.find(p => String(p.id) === String(edit.profesional_id));
+    return laDelTurno && !laDelTurno.activo ? [laDelTurno, ...activas] : activas;
+  };
+
+  const duenaDelServicio = (edit) => {
+    const servicio = servicios.find(s => String(s.id) === String(edit.servicio_id));
+    if (!servicio || String(servicio.profesional_id) === String(edit.profesional_id)) return null;
+    return profesionales.find(p => p.id === servicio.profesional_id)?.nombre || null;
+  };
+
+  // La hora original ya no se reinserta a mano: el backend excluye del listado
+  // el turno que se está editando, así que su propio horario aparece solo.
+  //
+  // El parche anterior no sabía nada de la agenda contra la que se iba a medir:
+  // al cambiar la profesional seguía ofreciendo la hora original aunque la nueva
+  // no atendiera ese día, y el turno entraba igual porque la transacción no mira
+  // los rangos horarios.
+  const opcionesHoraEdit = horariosEditTurno;
  
   const totalTurno = (turno) => {
     const base = parseFloat(turno.servicio?.precio_pesos || 0);
@@ -584,8 +625,26 @@ export default function AdminPage() {
           <div><label className="text-xs text-[#A89585] mb-1 block">Apellido</label><input type="text" value={editandoTurno.apellido} onChange={e => setEditandoTurno({...editandoTurno, apellido: e.target.value})} className="input-field" required /></div>
           <div><label className="text-xs text-[#A89585] mb-1 block">Teléfono</label><input type="tel" value={editandoTurno.telefono} onChange={e => setEditandoTurno({...editandoTurno, telefono: e.target.value.replace(/\D/g,'').slice(0,10)})} placeholder="1123456789" className="input-field" maxLength={10} required /></div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => setEditandoTurno({...editandoTurno, servicio_id: e.target.value, hora_inicio: ''})} className="input-field" required><option value="">Seleccionar...</option>{servicios.filter(s => s.activo && (!editandoTurno.profesional_id || s.profesional_id === editandoTurno.profesional_id)).map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select></div>
+        {editandoTurno.grupo_reserva && (
+          <p className="text-xs text-[#A89585]">Este turno es parte de una reserva de varios servicios, así que no se puede pasar a otra profesional.</p>
+        )}
+        {/* Se mira la fecha ORIGINAL: si el turno se corre a otro mes, el aviso
+            tiene que seguir ahí, porque es justo cuando se va de la liquidación
+            del mes en el que estaba. */}
+        {esDeMesAnterior(editandoTurno._origFecha) && (
+          <p className="text-xs text-[#C47070] bg-[#FBEAEA] rounded-lg px-3 py-2">⚠️ Es un turno de un mes anterior. Si le cambiás la profesional o el servicio, cambia la liquidación de ese mes, que quizá ya compartiste.</p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          {/* La profesional se elige aparte del servicio: un turno puede quedar
+              en manos de quien no es la dueña del servicio, que es justamente
+              para lo que sirve reasignar. */}
+          <div><label className="text-xs text-[#A89585] mb-1 block">Profesional</label><select value={editandoTurno.profesional_id} onChange={e => setEditandoTurno({...editandoTurno, profesional_id: e.target.value, hora_inicio: ''})} disabled={!!editandoTurno.grupo_reserva} className="input-field" required>{profesionalesParaEditar(editandoTurno).map(p => <option key={p.id} value={p.id}>{p.nombre}{p.activo ? '' : ' (inactiva)'}</option>)}</select></div>
+          {/* Cambiar el servicio arrastra la profesional a su dueña, que es lo
+              que este formulario hacía antes de que el select existiera. Si
+              Daniela quiere a otra, lo dice en el select de al lado: así el
+              camino viejo sigue funcionando y la comisión no cambia de manos
+              sin que nadie lo haya pedido. */}
+          <div><label className="text-xs text-[#A89585] mb-1 block">Servicio</label><select value={editandoTurno.servicio_id} onChange={e => { const elegido = servicios.find(s => String(s.id) === e.target.value); setEditandoTurno({...editandoTurno, servicio_id: e.target.value, profesional_id: elegido ? String(elegido.profesional_id) : editandoTurno.profesional_id, hora_inicio: ''}); }} className="input-field" required><option value="">Seleccionar...</option>{servicios.filter(s => s.activo).map(s => <option key={s.id} value={s.id}>{s.nombre} ({s.duracion_minutos}min - ${s.precio_pesos})</option>)}</select>{duenaDelServicio(editandoTurno) && <span className="text-xs text-[#A89585] mt-1 block">servicio de {duenaDelServicio(editandoTurno)}</span>}</div>
           <div><label className="text-xs text-[#A89585] mb-1 block">Fecha</label><input type="date" value={editandoTurno.fecha} onChange={e => setEditandoTurno({...editandoTurno, fecha: e.target.value, hora_inicio: ''})} className="input-field" required /></div>
           <div><label className="text-xs text-[#A89585] mb-1 block">Hora</label><select value={editandoTurno.hora_inicio} onChange={e => setEditandoTurno({...editandoTurno, hora_inicio: e.target.value})} className="input-field" required><option value="">Seleccionar...</option>{opcionesHoraEdit.map(h => <option key={h.hora_inicio} value={h.hora_inicio}>{h.hora_inicio}{h.hora_fin ? ` - ${h.hora_fin}` : ''}</option>)}</select>{editandoTurno.fecha && editandoTurno.servicio_id && opcionesHoraEdit.length === 0 && <p className="text-xs text-[#C47070] mt-1">Sin horarios</p>}</div>
         </div>
