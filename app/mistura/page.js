@@ -61,26 +61,50 @@ export default function MisTurnosPage() {
     let cancelado = false;
     setCargandoHorarios(true);
     const servicioId = nuevoServicioId || editando.servicio_id;
-    api.get(`/api/turnos/disponibilidad/${nuevaFecha}/${servicioId}?excluir_turno_id=${editando.id}&token=${editando.token_acceso}`)
+    // Los extras van en el pedido porque alargan el turno: sin ellos el listado
+    // mide huecos mas cortos de lo que el turno realmente dura y le ofrece
+    // horarios que despues no entran. Cuando cambia el servicio, los que valen
+    // son los que el servicio nuevo conserva.
+    const extras = (preview ? preview.extras_conservados.map(e => e.id) : (editando.extras_ids || [])).join(',');
+    api.get(`/api/turnos/disponibilidad/${nuevaFecha}/${servicioId}?excluir_turno_id=${editando.id}&token=${encodeURIComponent(editando.token_acceso)}${extras ? `&extras=${extras}` : ''}`)
       .then(res => { if (!cancelado) setHorariosDia(res.data.horarios || []); })
       .catch(() => { if (!cancelado) setHorariosDia([]); })
       .finally(() => { if (!cancelado) setCargandoHorarios(false); });
     return () => { cancelado = true; };
-  }, [editando, nuevaFecha, nuevoServicioId]);
+    // `preview` entra a propósito: si la cuenta vuelve después de que eligió la
+    // fecha, los horarios hay que recalcularlos con los extras que el servicio
+    // nuevo conserva, no con los del turno viejo.
+  }, [editando, nuevaFecha, nuevoServicioId, preview]);
 
   // Que le queda si cambia el servicio. Solo se pide cuando eligio uno distinto
   // del que ya tiene.
+  //
+  // El preview se guarda JUNTO al id que lo pidio. Sin eso no hay forma de saber
+  // si lo que esta en pantalla corresponde al servicio elegido ahora o al
+  // anterior, y se puede confirmar un cambio mostrando la cuenta de otro.
   useEffect(() => {
     if (!editando || !nuevoServicioId || String(nuevoServicioId) === String(editando.servicio_id)) {
       setPreview(null);
       return;
     }
     let cancelado = false;
-    api.get(`/api/turnos/${editando.id}/cambio-preview?token=${editando.token_acceso}&nuevo_servicio_id=${nuevoServicioId}`)
-      .then(res => { if (!cancelado) setPreview(res.data); })
+    const pedidoPara = String(nuevoServicioId);
+    setPreview(null);
+    api.get(`/api/turnos/${editando.id}/cambio-preview?token=${encodeURIComponent(editando.token_acceso)}&nuevo_servicio_id=${pedidoPara}`)
+      .then(res => { if (!cancelado) setPreview({ ...res.data, _para: pedidoPara }); })
       .catch(() => { if (!cancelado) setPreview(null); });
     return () => { cancelado = true; };
   }, [editando, nuevoServicioId]);
+
+  // ¿Lo que se ve en pantalla corresponde al servicio elegido?
+  //
+  // Si eligio otro servicio y el preview no volvio (o es de otro id), NO se
+  // puede confirmar: el PATCH cambiaria el servicio, descartaria los extras que
+  // el nuevo no ofrece y recongelaria el precio, despues de que la pantalla le
+  // dijo que no cambiaba nada. Es el anti-objetivo del diseño: perder un extra
+  // sin verlo.
+  const cambiaDeServicio = !!editando && String(nuevoServicioId) !== String(editando.servicio_id);
+  const previewAlDia = !cambiaDeServicio || (preview && preview._para === String(nuevoServicioId));
 
   const abrirEdicion = (turno) => {
     setEditando(turno);
@@ -446,7 +470,7 @@ export default function MisTurnosPage() {
                               <button
                                 key={h.hora_inicio}
                                 onClick={() => confirmarCambio(h.hora_inicio)}
-                                disabled={guardando}
+                                disabled={guardando || !previewAlDia}
                                 className="py-2 rounded-lg text-sm font-medium bg-white border border-[#F5D9E4] text-[#3A3A3A] hover:border-[#E6005C] hover:bg-[#FDEFF5] cursor-pointer disabled:opacity-40 disabled:cursor-default"
                               >
                                 {h.hora_inicio}
@@ -455,11 +479,18 @@ export default function MisTurnosPage() {
                           </div>
                         )}
 
+                        {/* La nota nunca puede decir "queda igual" cuando eligió
+                            otro servicio: mientras la cuenta no esté, no se
+                            puede confirmar y se dice por qué. */}
                         <p className="text-xs text-[#8A8580] mt-3">
-                          Tocá un horario para confirmar el cambio.
-                          {preview
-                            ? ` Te queda ${preview.servicio.nombre} · ${preview.duracion_minutos} min · $${Number(preview.precio).toLocaleString('es-AR')}.`
-                            : ' El servicio y los extras quedan igual.'}
+                          {!previewAlDia
+                            ? 'Estamos calculando cómo te queda el turno con ese servicio…'
+                            : <>
+                                Tocá un horario para confirmar el cambio.
+                                {preview
+                                  ? ` Te queda ${preview.servicio.nombre} · ${preview.duracion_minutos} min · $${Number(preview.precio).toLocaleString('es-AR')}.`
+                                  : ' El servicio y los extras quedan igual.'}
+                              </>}
                         </p>
                       </>
                     )}
